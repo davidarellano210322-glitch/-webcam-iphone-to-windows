@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Mobile Webcam</title>
+    <style>
+        :root {
+            --bg-color: #0d0f14;
+            --card-bg: rgba(22, 28, 45, 0.4);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #00f2fe;
+            --primary-glow: rgba(0, 242, 254, 0.4);
+            --secondary: #4facfe;
+            --danger: #ff4757;
+            --danger-glow: rgba(255, 71, 87, 0.4);
+            --success: #2ed573;
+            --success-glow: rgba(46, 213, 115, 0.4);
+            --text: #f1f2f6;
+            --text-muted: #a4b0be;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: radial-gradient(circle at top, #1e293b, var(--bg-color));
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow-x: hidden;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 440px;
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 4px;
+            letter-spacing: -0.5px;
+        }
+
+        header p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .preview-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Espejo para vista previa local, la cámara física suele ser así */
+        }
+
+        .video-flipped-none {
+            transform: scaleX(1);
+        }
+
+        .status-badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(13, 15, 20, 0.85);
+            backdrop-filter: blur(4px);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border: 1px solid rgba(255,255,255,0.05);
+            z-index: 10;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--danger);
+            box-shadow: 0 0 8px var(--danger-glow);
+        }
+
+        .status-dot.connected {
+            background-color: var(--success);
+            box-shadow: 0 0 10px var(--success-glow);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-dot.connecting {
+            background-color: #ffb142;
+            box-shadow: 0 0 10px rgba(255, 177, 66, 0.4);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.5; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.5; }
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        select, input[type="range"] {
+            width: 100%;
+            background: rgba(13, 15, 20, 0.5);
+            border: 1px solid var(--border-color);
+            color: var(--text);
+            padding: 12px 16px;
+            border-radius: 12px;
+            outline: none;
+            font-size: 0.9rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+
+        .select-wrapper {
+            position: relative;
+        }
+
+        .select-wrapper::after {
+            content: "▼";
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+        }
+
+        select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-value {
+            font-size: 0.9rem;
+            font-weight: bold;
+            min-width: 45px;
+            text-align: right;
+            color: var(--primary);
+        }
+
+        input[type="range"] {
+            padding: 8px 0;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            outline: none;
+            border: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--primary);
+            box-shadow: 0 0 10px var(--primary-glow);
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:active {
+            transform: scale(1.2);
+        }
+
+        .btn-stream {
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: #000;
+            border: none;
+            padding: 16px;
+            border-radius: 14px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 8px 20px var(--primary-glow);
+            transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-stream:active {
+            transform: scale(0.98);
+        }
+
+        .btn-stream.streaming {
+            background: var(--danger);
+            color: var(--text);
+            box-shadow: 0 8px 20px var(--danger-glow);
+        }
+
+        .stats-panel {
+            background: rgba(13, 15, 20, 0.3);
+            border: 1px solid rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 0.75rem;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+        }
+
+        .stat-val {
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        footer {
+            margin-top: 16px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Antigravity Webcam</h1>
+            <p>Cliente Móvil de Captura</p>
+        </header>
+
+        <div class="preview-container">
+            <div class="status-badge">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Desconectado</span>
+            </div>
+            <video id="webcam" autoplay playsinline muted></video>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="camera-select">Seleccionar Cámara</label>
+                <div class="select-wrapper">
+                    <select id="camera-select">
+                        <option value="">Cargando cámaras...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="resolution-select">Resolución</label>
+                <div class="select-wrapper">
+                    <select id="resolution-select">
+                        <option value="640x480">640 x 480 (SD - Recomendado)</option>
+                        <option value="1280x720" selected>1280 x 720 (HD)</option>
+                        <option value="1920x1080">1920 x 1080 (Full HD)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="fps-range">FPS Máximos</label>
+                <div class="slider-container">
+                    <input type="range" id="fps-range" min="10" max="60" value="30">
+                    <span class="slider-value" id="fps-val">30 FPS</span>
+                </div>
+            </div>
+
+            <button class="btn-stream" id="stream-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" id="play-icon">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>Iniciar Transmisión</span>
+            </button>
+        </div>
+
+        <div class="stats-panel">
+            <div class="stat-item">
+                <span class="stat-label">FPS Reales</span>
+                <span class="stat-val" id="stat-fps">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Ancho de banda</span>
+                <span class="stat-val" id="stat-bandwidth">0.00 Mbps</span>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Desarrollado con ♥ por Antigravity</p>
+    </footer>
+
+    <!-- Canvas oculto para compresión JPEG -->
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <script>
+        // Visual Logger para depurar en iOS/iPhone
+        window.addEventListener('error', function(e) {
+            const errDiv = document.getElementById('error-log') || document.createElement('div');
+            errDiv.id = 'error-log';
+            errDiv.style.position = 'fixed';
+            errDiv.style.top = '0';
+            errDiv.style.left = '0';
+            errDiv.style.width = '100%';
+            errDiv.style.background = 'rgba(255, 71, 87, 0.95)';
+            errDiv.style.color = 'white';
+            errDiv.style.padding = '12px';
+            errDiv.style.zIndex = '9999';
+            errDiv.style.fontSize = '12px';
+            errDiv.style.fontFamily = 'monospace';
+            errDiv.style.wordBreak = 'break-all';
+            errDiv.innerHTML = '<strong>Error de JS:</strong> ' + e.message + '<br><small>en ' + e.filename + ':' + e.lineno + '</small>';
+            document.body.appendChild(errDiv);
+        });
+
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const cameraSelect = document.getElementById('camera-select');
+        const resolutionSelect = document.getElementById('resolution-select');
+        const fpsRange = document.getElementById('fps-range');
+        const fpsVal = document.getElementById('fps-val');
+        const streamBtn = document.getElementById('stream-btn');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        
+        // Stats
+        const statFps = document.getElementById('stat-fps');
+        const statBandwidth = document.getElementById('stat-bandwidth');
+
+        let localStream = null;
+        let ws = null;
+        let isStreaming = false;
+        let streamInterval = null;
+        let frameCount = 0;
+        let totalBytesSent = 0;
+        let lastStatsTime = performance.now();
+        let activeFacingMode = "user"; // Modo espejo para cámara frontal
+
+        // Actualizar etiqueta de FPS
+        fpsRange.addEventListener('input', () => {
+            fpsVal.textContent = `${fpsRange.value} FPS`;
+        });
+
+        // Cargar cámaras
+        async function getCameras() {
+            try {
+                // Solicitar permisos de cámara primero para poder listar los dispositivos con sus nombres reales
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = '';
+                
+                if (videoDevices.length === 0) {
+                    cameraSelect.innerHTML = '<option value="">No se encontraron cámaras</option>';
+                    return;
+                }
+
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    const label = device.label || '';
+                    option.text = label || `Cámara ${index + 1}`;
+                    // Intentar preseleccionar la cámara trasera si está disponible
+                    if (label.toLowerCase().includes('back') || label.toLowerCase().includes('trasera') || label.toLowerCase().includes('rear')) {
+                        option.selected = true;
+                    }
+                    cameraSelect.appendChild(option);
+                });
+
+                // Iniciar la cámara seleccionada por defecto
+                startCameraPreview();
+            } catch (err) {
+                console.error("Error obteniendo cámaras: ", err);
+                statusText.textContent = "Error de Acceso";
+                alert("Por favor concede permisos para usar la cámara: " + err.message);
+            }
+        }
+
+        // Iniciar la vista previa de la cámara en el elemento <video>
+        async function startCameraPreview() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+
+            const deviceId = cameraSelect.value;
+            const [width, height] = resolutionSelect.value.split('x').map(Number);
+
+            const constraints = {
+                video: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    width: { ideal: width },
+                    height: { ideal: height },
+                    frameRate: { ideal: parseInt(fpsRange.value) }
+                }
+            };
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = localStream;
+                
+                // Forzar reproducción en iOS Safari
+                video.play().catch(e => {
+                    console.log("Auto-play bloqueado por el navegador, esperando interacción:", e);
+                });
+
+                // Detectar si la cámara es frontal o trasera para aplicar el modo espejo
+                const tracks = localStream.getVideoTracks();
+                if (tracks.length > 0) {
+                    const track = tracks[0];
+                    const label = (track.label || '').toLowerCase();
+                    if (label.includes('back') || label.includes('rear') || label.includes('trasera')) {
+                        video.classList.add('video-flipped-none');
+                    } else {
+                        video.classList.remove('video-flipped-none');
+                    }
+                    
+                    track.onended = () => console.log("Stream finalizado.");
+                }
+            } catch (err) {
+                console.error("Error al iniciar vista previa de cámara: ", err);
+                alert("Error al abrir cámara: " + err.message);
+            }
+        }
+
+        // Eventos para cambiar de cámara o resolución al vuelo
+        cameraSelect.addEventListener('change', startCameraPreview);
+        resolutionSelect.addEventListener('change', startCameraPreview);
+
+        // Control del botón de Transmisión
+        streamBtn.addEventListener('click', () => {
+            if (isStreaming) {
+                stopStreaming();
+            } else {
+                startStreaming();
+            }
+        });
+
+        function updateStatus(state) {
+            statusDot.className = "status-dot";
+            if (state === 'disconnected') {
+                statusText.textContent = "Desconectado";
+                statusDot.classList.remove('connected', 'connecting');
+            } else if (state === 'connecting') {
+                statusText.textContent = "Conectando...";
+                statusDot.classList.add('connecting');
+            } else if (state === 'connected') {
+                statusText.textContent = "Transmitiendo";
+                statusDot.classList.add('connected');
+            }
+        }
+
+        function startStreaming() {
+            updateStatus('connecting');
+            
+            // Obtener protocolo y host
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            
+            // URL de WebSocket
+            ws = new WebSocket(`${protocol}//${host}/ws`);
+            ws.binaryType = 'blob';
+
+            ws.onopen = () => {
+                updateStatus('connected');
+                isStreaming = true;
+                streamBtn.innerHTML = `
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                    </svg>
+                    <span>Detener Transmisión</span>
+                `;
+                streamBtn.classList.add('streaming');
+                
+                // Bloquear selectores mientras transmite para evitar inconsistencias
+                cameraSelect.disabled = true;
+                resolutionSelect.disabled = true;
+                fpsRange.disabled = true;
+
+                // Iniciar el loop de transmisión
+                frameCount = 0;
+                totalBytesSent = 0;
+                lastStatsTime = performance.now();
+                
+                const targetInterval = 1000 / parseInt(fpsRange.value);
+                sendFrameLoop(targetInterval);
+            };
+
+            ws.onclose = () => {
+                stopStreaming();
+            };
+
+            ws.onerror = (err) => {
+                console.error("Error en WebSocket: ", err);
+                stopStreaming();
+            };
+        }
+
+        function stopStreaming() {
+            isStreaming = false;
+            updateStatus('disconnected');
+            
+            if (ws) {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.close();
+                }
+                ws = null;
+            }
+
+            if (streamInterval) {
+                clearTimeout(streamInterval);
+                streamInterval = null;
+            }
+
+            streamBtn.innerHTML = `
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>Iniciar Transmisión</span>
+            `;
+            streamBtn.classList.remove('streaming');
+
+            cameraSelect.disabled = false;
+            resolutionSelect.disabled = false;
+            fpsRange.disabled = false;
+
+            statFps.textContent = "0";
+            statBandwidth.textContent = "0.00 Mbps";
+        }
+
+        function sendFrameLoop(interval) {
+            if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const startTime = performance.now();
+
+            if (video.videoWidth > 0) {
+                // Optimización: Solo cambiar dimensiones del canvas si cambian de verdad
+                if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                }
+
+                // Dibujar el frame en el canvas
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // Comprimir a JPEG (calidad 0.70) y enviar en binario
+                canvas.toBlob((blob) => {
+                    if (blob && isStreaming && ws && ws.readyState === WebSocket.OPEN) {
+                        // Optimización de Red: Solo enviar si el buffer del socket está vacío.
+                        // Si está lleno, significa que el WiFi está congestionado, por lo que descartamos el frame
+                        // para mantener latencia CERO en tiempo real en vez de acumular lag.
+                        if (ws.bufferedAmount === 0) {
+                            ws.send(blob);
+                            frameCount++;
+                            totalBytesSent += blob.size;
+                        }
+
+                        // Calcular estadísticas cada segundo
+                        const now = performance.now();
+                        const diff = now - lastStatsTime;
+                        if (diff >= 1000) {
+                            const fps = Math.round((frameCount * 1000) / diff);
+                            const mbps = ((totalBytesSent * 8) / 1000000) / (diff / 1000);
+                            
+                            statFps.textContent = fps;
+                            statBandwidth.textContent = `${mbps.toFixed(2)} Mbps`;
+
+                            frameCount = 0;
+                            totalBytesSent = 0;
+                            lastStatsTime = now;
+                        }
+                    }
+
+                    // Calcular retraso adaptativo para mantener los FPS deseados
+                    const elapsed = performance.now() - startTime;
+                    const nextTick = Math.max(0, interval - elapsed);
+                    streamInterval = setTimeout(() => sendFrameLoop(interval), nextTick);
+
+                }, 'image/jpeg', 0.70); // Reducido a 0.70 para mayor compresión y velocidad
+            } else {
+                // Si el video no ha cargado frames aún, reintentar en 100ms
+                streamInterval = setTimeout(() => sendFrameLoop(interval), 100);
+            }
+        }
+
+        // Cargar al iniciar
+        window.addEventListener('load', getCameras);
+    </script>
+</body>
+</html>

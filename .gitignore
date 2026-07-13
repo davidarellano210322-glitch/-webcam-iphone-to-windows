@@ -1,0 +1,26 @@
+# dotnet (C#)
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/*.suo
+
+# Flutter / Dart
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+**/mobile_app/ios/Flutter/Generated.xcconfig
+**/mobile_app/ios/Flutter/flutter_export_environment.sh
+
+# IDEs and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Temporary test folders
+/test_api/

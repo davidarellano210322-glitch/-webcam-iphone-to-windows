@@ -1,0 +1,76 @@
+<Window x:Class="desktop_app.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Antigravity Webcam Server" Height="500" Width="700"
+        Background="#0f172a" Foreground="#f8fafc"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Antigravity Webcam" FontSize="28" FontWeight="Bold" Foreground="#38bdf8"/>
+            <TextBlock Text="Receptor USB Nativo para iOS" FontSize="12" Foreground="#94a3b8"/>
+        </StackPanel>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="280"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Sidebar Controls -->
+            <StackPanel Grid.Column="0" Margin="0,0,20,0">
+                <Border Background="#1e293b" CornerRadius="12" Padding="15" Margin="0,0,0,15">
+                    <StackPanel>
+                        <TextBlock Text="Estado del Dispositivo" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#38bdf8"/>
+                        <TextBlock x:Name="DeviceStatusText" Text="Desconectado" FontSize="16" FontWeight="SemiBold" Foreground="#ef4444"/>
+                        <TextBlock x:Name="DeviceDetailsText" Text="Enchufa tu iPhone por USB" FontSize="11" Foreground="#94a3b8" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="#1e293b" CornerRadius="12" Padding="15">
+                    <StackPanel>
+                        <TextBlock Text="Túnel de Red" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#38bdf8"/>
+                        <Grid Margin="0,5">
+                            <TextBlock Text="Puerto Remoto (Celular):" Foreground="#94a3b8" HorizontalAlignment="Left"/>
+                            <TextBlock Text="6000" Foreground="#f8fafc" HorizontalAlignment="Right" FontWeight="Bold"/>
+                        </Grid>
+                        <Grid Margin="0,5">
+                            <TextBlock Text="Puerto Local (PC):" Foreground="#94a3b8" HorizontalAlignment="Left"/>
+                            <TextBlock Text="6000" Foreground="#f8fafc" HorizontalAlignment="Right" FontWeight="Bold"/>
+                        </Grid>
+                        <Button x:Name="StartTunnelBtn" Content="Iniciar Servidor USB" Background="#0284c7" BorderThickness="0" Foreground="White" Padding="10" Margin="0,15,0,0" Click="StartTunnelBtn_Click">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="6"/>
+                                </Style>
+                            </Button.Resources>
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Console Log -->
+            <Border Grid.Column="1" Background="#020617" CornerRadius="12" BorderThickness="1" BorderBrush="#334155" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Consola de Eventos" FontSize="11" Foreground="#64748b" Margin="5,0,0,5"/>
+                    <TextBox Grid.Row="1" x:Name="LogTextBox" Background="Transparent" Foreground="#4ade80" BorderThickness="0" 
+                             FontFamily="Consolas" FontSize="12" IsReadOnly="True" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Footer -->
+        <TextBlock Grid.Row="2" Text="Desarrollado con ♥ por Antigravity" FontSize="10" Foreground="#64748b" HorizontalAlignment="Center" Margin="0,15,0,0"/>
+    </Grid>
+</Window>
