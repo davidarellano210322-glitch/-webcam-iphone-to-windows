@@ -30,7 +30,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     // Active camera configuration parameters
     private var currentPosition: AVCaptureDevice.Position = .back
     private var currentLensType: AVCaptureDevice.DeviceType = .builtInWideAngleCamera
-    private var currentResolution: String = "720p"
+    private var currentResolution: String = "1080p"
     private var currentFPS: Double = 30.0
     
     // Iniciar servidores TCP
@@ -758,7 +758,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         
-        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 12_000_000 : (currentResolution == "1080p" ? 6_000_000 : 3_500_000)
+        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 25_000_000 : (currentResolution == "1080p" ? 15_000_000 : 8_000_000)
         let targetBitrate = (rawBitrate as NSNumber) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
@@ -766,6 +766,9 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         let limitWindow = (1.0 as NSNumber) as CFNumber
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
+        
+        let quality: Float = 0.95
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: quality as CFNumber)
         
         VTCompressionSessionPrepareToEncodeFrames(session)
         print("[+] Codificador VideoToolbox optimizado para \(currentResolution) a \(currentFPS) FPS.")
