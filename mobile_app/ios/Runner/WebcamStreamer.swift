@@ -530,14 +530,13 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             
             print("[*] Iniciando captura de cámara nativa y codificador VideoToolbox...")
             
-            // Prevent device screen from dimming/sleeping
-            DispatchQueue.main.async {
+            // Prevent device screen from dimming/sleeping and begin background task
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
                 UIApplication.shared.isIdleTimerDisabled = true
-            }
-            
-            // Begin background task to keep socket connection alive if app is backgrounded
-            self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WebcamStreamerBackground") { [weak self] in
-                self?.stopStreaming()
+                self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WebcamStreamerBackground") { [weak self] in
+                    self?.stopStreaming()
+                }
             }
             
             self.setupCaptureSession()
@@ -556,15 +555,14 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             print("[*] Deteniendo captura y codificador...")
             self.isStreaming = false
             
-            // Restore default idle timer behavior
-            DispatchQueue.main.async {
+            // Restore default idle timer behavior and end background task on main thread
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
                 UIApplication.shared.isIdleTimerDisabled = false
-            }
-            
-            // End background task
-            if self.backgroundTaskID != .invalid {
-                UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
-                self.backgroundTaskID = .invalid
+                if self.backgroundTaskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
+                    self.backgroundTaskID = .invalid
+                }
             }
             
             self.captureSession?.stopRunning()
