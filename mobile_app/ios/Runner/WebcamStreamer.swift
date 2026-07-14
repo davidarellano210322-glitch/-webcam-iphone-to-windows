@@ -586,7 +586,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         var height: Int32 = 720
         
         if currentResolution.lowercased() == "4k" {
-            session.sessionPreset = .hd3840x2160
+            session.sessionPreset = .hd4K3840x2160
             width = 3840
             height = 2160
         } else if currentResolution == "1080p" {
