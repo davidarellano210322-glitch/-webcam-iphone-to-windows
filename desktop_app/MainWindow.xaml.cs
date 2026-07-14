@@ -12,6 +12,10 @@ using System.Windows.Threading;
 using System.Windows.Media.Imaging;
 using iMobileDevice;
 using iMobileDevice.iDevice;
+using Windows.Media.FaceAnalysis;
+using Windows.Media;
+using Windows.Graphics.Imaging;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace desktop_app
 {
@@ -50,6 +54,18 @@ namespace desktop_app
         private int _activeWidth = 1920;
         private int _activeHeight = 1080;
 
+        // WinRT Face Analysis variables
+        private FaceTracker? _faceTracker = null;
+        private readonly object _faceLock = new object();
+        private bool _isDetectingFaces = false;
+        private double _smoothFaceX = 0;
+        private double _smoothFaceY = 0;
+        private double _smoothFaceW = 0;
+        private double _smoothFaceH = 0;
+        private bool _faceDetected = false;
+        private double _smoothZoom = 1.0;
+        private DateTime _lastFaceDetectedTime = DateTime.MinValue;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -58,6 +74,9 @@ namespace desktop_app
             // Local video preview bitmap init (1080p FHD by default)
             _previewBitmap = new WriteableBitmap(1920, 1080, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
             VideoPreviewImage.Source = _previewBitmap;
+
+            // Start hardware-accelerated face tracker initialization
+            _ = InitFaceTrackerAsync();
         }
 
         private void InitializeLibiMobileDevice()
@@ -962,22 +981,39 @@ namespace desktop_app
             outHeight = height;
             byte[] processed = inputRgba;
 
-            // 1. Apply Mirror
+            // Trigger asynchronous WinRT face detection
+            TriggerFaceDetection(inputRgba, width, height);
+
+            // 1. Apply Spotlight (Face Highlight)
+            if (SpotlightCheckBox.IsChecked == true && _faceDetected)
+            {
+                double intensity = SpotlightSlider.Value;
+                ApplySpotlightInPlace(processed, width, height, _smoothFaceX, _smoothFaceY, _smoothFaceW, _smoothFaceH, intensity);
+            }
+
+            // 2. Apply Mirror
             if (_isMirrorActive)
             {
                 processed = ApplyMirror(processed, width, height);
             }
 
-            // 2. Apply Rotation
+            // 3. Apply Rotation
             if (_rotationAngle != 0)
             {
                 processed = ApplyRotation(processed, width, height, _rotationAngle, out outWidth, out outHeight);
             }
 
-            // 3. Apply Filters
+            // 4. Apply Filters
             if (_activeFilter != "none" && _filterIntensity > 0.0)
             {
                 ApplyFilterInPlace(processed, _activeFilter, _filterIntensity);
+            }
+
+            // 5. Apply Auto Framing (Zoom & Center on Face)
+            if (AutoFramingCheckBox.IsChecked == true && _faceDetected)
+            {
+                bool useZoom = AutoFramingZoomCheckBox.IsChecked == true;
+                processed = ApplyAutoFraming(processed, outWidth, outHeight, _smoothFaceX * (outWidth / (double)width), _smoothFaceY * (outHeight / (double)height), _smoothFaceW * (outWidth / (double)width), _smoothFaceH * (outHeight / (double)height), useZoom, out outWidth, out outHeight);
             }
 
             return processed;
@@ -1153,6 +1189,233 @@ namespace desktop_app
                 }
             }
             return iDeviceError.Success;
+        }
+
+        private async Task InitFaceTrackerAsync()
+        {
+            try
+            {
+                if (FaceTracker.IsSupported)
+                {
+                    _faceTracker = await FaceTracker.CreateAsync();
+                    Log("[+] Windows FaceTracker (detección facial por hardware) inicializado.");
+                }
+                else
+                {
+                    Log("[-] Windows FaceTracker no está soportado en este equipo.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[-] Error inicializando FaceTracker: {ex.Message}");
+            }
+        }
+
+        private void TriggerFaceDetection(byte[] frame, int width, int height)
+        {
+            if (_faceTracker == null) return;
+
+            lock (_faceLock)
+            {
+                if (_isDetectingFaces) return;
+                _isDetectingFaces = true;
+            }
+
+            // Copy frame for thread safety
+            byte[] frameCopy = new byte[frame.Length];
+            Buffer.BlockCopy(frame, 0, frameCopy, 0, frame.Length);
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var buffer = frameCopy.AsBuffer();
+                    var softwareBitmap = SoftwareBitmap.CreateCopyFromBuffer(buffer, BitmapPixelFormat.Rgba8, width, height);
+                    using (var videoFrame = VideoFrame.CreateWithSoftwareBitmap(softwareBitmap))
+                    {
+                        var faces = await _faceTracker.ProcessNextFrameAsync(videoFrame);
+
+                        lock (_faceLock)
+                        {
+                            if (faces != null && faces.Count > 0)
+                            {
+                                var face = faces[0];
+                                double targetX = face.FaceBox.X;
+                                double targetY = face.FaceBox.Y;
+                                double targetW = face.FaceBox.Width;
+                                double targetH = face.FaceBox.Height;
+
+                                if (!_faceDetected)
+                                {
+                                    _smoothFaceX = targetX;
+                                    _smoothFaceY = targetY;
+                                    _smoothFaceW = targetW;
+                                    _smoothFaceH = targetH;
+                                    _faceDetected = true;
+                                }
+                                else
+                                {
+                                    double lerp = 0.25;
+                                    _smoothFaceX += (targetX - _smoothFaceX) * lerp;
+                                    _smoothFaceY += (targetY - _smoothFaceY) * lerp;
+                                    _smoothFaceW += (targetW - _smoothFaceW) * lerp;
+                                    _smoothFaceH += (targetH - _smoothFaceH) * lerp;
+                                }
+                                _lastFaceDetectedTime = DateTime.Now;
+                            }
+                            else
+                            {
+                                if (DateTime.Now - _lastFaceDetectedTime > TimeSpan.FromSeconds(1.5))
+                                {
+                                    _faceDetected = false;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+                finally
+                {
+                    lock (_faceLock)
+                    {
+                        _isDetectingFaces = false;
+                    }
+                }
+            });
+        }
+
+        private void ApplySpotlightInPlace(byte[] rgba, int width, int height, double faceX, double faceY, double faceW, double faceH, double intensity)
+        {
+            double centerX = faceX + faceW / 2;
+            double centerY = faceY + faceH / 2;
+            double radiusX = faceW * 1.3;
+            double radiusY = faceH * 1.3;
+
+            double maxDim = Math.Max(radiusX, radiusY);
+            double radiusSq = maxDim * maxDim;
+            double dimFactor = (intensity / 100.0) * 0.75;
+
+            Parallel.For(0, height, y =>
+            {
+                int rowStart = y * width * 4;
+                double dy = y - centerY;
+                double dySq = dy * dy;
+
+                for (int x = 0; x < width; x++)
+                {
+                    int idx = rowStart + x * 4;
+                    double dx = x - centerX;
+                    double dxSq = dx * dx;
+
+                    double distanceSq = dxSq + dySq;
+
+                    if (distanceSq > radiusSq)
+                    {
+                        rgba[idx] = (byte)(rgba[idx] * (1.0 - dimFactor));
+                        rgba[idx + 1] = (byte)(rgba[idx + 1] * (1.0 - dimFactor));
+                        rgba[idx + 2] = (byte)(rgba[idx + 2] * (1.0 - dimFactor));
+                    }
+                    else
+                    {
+                        double distance = Math.Sqrt(distanceSq);
+                        double radius = maxDim;
+                        double innerRadius = radius * 0.6;
+                        if (distance > innerRadius)
+                        {
+                            double t = (distance - innerRadius) / (radius - innerRadius);
+                            t = Math.Max(0.0, Math.Min(1.0, t));
+                            double currentDim = dimFactor * t;
+
+                            rgba[idx] = (byte)(rgba[idx] * (1.0 - currentDim));
+                            rgba[idx + 1] = (byte)(rgba[idx + 1] * (1.0 - currentDim));
+                            rgba[idx + 2] = (byte)(rgba[idx + 2] * (1.0 - currentDim));
+                        }
+                    }
+                }
+            });
+        }
+
+        private byte[] ApplyAutoFraming(byte[] rgba, int width, int height, double faceX, double faceY, double faceW, double faceH, bool useZoom, out int outWidth, out int outHeight)
+        {
+            double zoom = 1.35;
+            if (useZoom)
+            {
+                double targetFaceHeight = height * 0.35;
+                zoom = targetFaceHeight / faceH;
+                zoom = Math.Max(1.0, Math.Min(3.0, zoom));
+            }
+
+            _smoothZoom += (zoom - _smoothZoom) * 0.08;
+
+            int cropW = (int)(width / _smoothZoom);
+            int cropH = (int)(height / _smoothZoom);
+
+            double faceCenterX = faceX + faceW / 2;
+            double faceCenterY = faceY + faceH / 2;
+
+            int cropX = (int)(faceCenterX - cropW / 2.0);
+            int cropY = (int)(faceCenterY - cropH / 2.0);
+
+            cropX = Math.Max(0, Math.Min(width - cropW, cropX));
+            cropY = Math.Max(0, Math.Min(height - cropH, cropY));
+
+            outWidth = width;
+            outHeight = height;
+
+            return CropAndScale(rgba, width, height, cropX, cropY, cropW, cropH, width, height);
+        }
+
+        private byte[] CropAndScale(byte[] rgba, int srcW, int srcH, int cropX, int cropY, int cropW, int cropH, int destW, int destH)
+        {
+            byte[] output = new byte[destW * destH * 4];
+            double scaleX = (double)cropW / destW;
+            double scaleY = (double)cropH / destH;
+
+            Parallel.For(0, destH, dy =>
+            {
+                double sy = cropY + dy * scaleY;
+                int y_low = (int)Math.Floor(sy);
+                int y_high = Math.Min(srcH - 1, y_low + 1);
+                double ty = sy - y_low;
+
+                int destRowStart = dy * destW * 4;
+                int srcRowLowStart = y_low * srcW * 4;
+                int srcRowHighStart = y_high * srcW * 4;
+
+                for (int dx = 0; dx < destW; dx++)
+                {
+                    double sx = cropX + dx * scaleX;
+                    int x_low = (int)Math.Floor(sx);
+                    int x_high = Math.Min(srcW - 1, x_low + 1);
+                    double tx = sx - x_low;
+
+                    int idx_00 = srcRowLowStart + x_low * 4;
+                    int idx_10 = srcRowLowStart + x_high * 4;
+                    int idx_01 = srcRowHighStart + x_low * 4;
+                    int idx_11 = srcRowHighStart + x_high * 4;
+
+                    int destIdx = destRowStart + dx * 4;
+
+                    for (int c = 0; c < 4; c++)
+                    {
+                        double val = (1 - tx) * (1 - ty) * rgba[idx_00 + c] +
+                                     tx * (1 - ty) * rgba[idx_10 + c] +
+                                     (1 - tx) * ty * rgba[idx_01 + c] +
+                                     tx * ty * rgba[idx_11 + c];
+                        output[destIdx + c] = (byte)val;
+                    }
+                }
+            });
+
+            return output;
+        }
+
+        private void AutoFramingControl_Changed(object sender, RoutedEventArgs e)
+        {
+            if (AutoFramingZoomCheckBox != null && AutoFramingCheckBox != null)
+            {
+                AutoFramingZoomCheckBox.IsEnabled = AutoFramingCheckBox.IsChecked == true;
+            }
         }
 
         private void ShowLogsCheckBox_Changed(object sender, RoutedEventArgs e)

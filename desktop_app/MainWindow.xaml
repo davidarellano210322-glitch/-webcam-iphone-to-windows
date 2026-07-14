@@ -467,6 +467,10 @@
                                     <Slider x:Name="SpotlightSlider" Minimum="0" Maximum="100" Value="48" Width="170" HorizontalAlignment="Right"/>
                                 </Grid>
 
+                                <!-- Auto Framing controls -->
+                                <CheckBox x:Name="AutoFramingCheckBox" Content="Auto Framing (Seguimiento)" Margin="0,0,0,6" Checked="AutoFramingControl_Changed" Unchecked="AutoFramingControl_Changed"/>
+                                <CheckBox x:Name="AutoFramingZoomCheckBox" Content="Auto Framing + Zoom Inteligente" Margin="0,0,0,15" Checked="AutoFramingControl_Changed" Unchecked="AutoFramingControl_Changed" IsEnabled="False"/>
+
                                 <!-- Filters -->
                                 <TextBlock Text="Filter" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
                                 <ComboBox x:Name="FilterComboBox" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="8,6" Margin="0,0,0,12" SelectionChanged="FilterComboBox_SelectionChanged">

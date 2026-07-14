@@ -180,8 +180,17 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     }
     
     private func processControlMessage(_ data: Data) {
+        var cleanData = data
+        if data.count >= 4 {
+            let firstByte = data[data.startIndex]
+            // If the first byte is not '{' (0x7B) and not whitespace (0x20, 0x09, 0x0A, 0x0D), strip the 4-byte header
+            if firstByte != 0x7B && firstByte != 0x20 && firstByte != 0x09 && firstByte != 0x0A && firstByte != 0x0D {
+                cleanData = data.subdata(in: data.startIndex + 4 ..< data.endIndex)
+            }
+        }
+        
         do {
-            if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+            if let json = try JSONSerialization.jsonObject(with: cleanData, options: []) as? [String: Any],
                let cmd = json["cmd"] as? String {
                 
                 print("[*] Comando de control recibido: \(cmd)")
@@ -633,17 +642,52 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             try camera.lockForConfiguration()
             
             var optimalFormat: AVCaptureDevice.Format? = nil
+            var highestFrameRateRange: AVFrameRateRange? = nil
+            
             for format in camera.formats {
                 let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
                 if dimensions.width == width && dimensions.height == height {
-                    if optimalFormat == nil {
-                        optimalFormat = format
-                    } else {
-                        let currentMaxFPS = optimalFormat!.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
-                        let newMaxFPS = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
-                        if newMaxFPS > currentMaxFPS {
-                            optimalFormat = format
+                    for range in format.videoSupportedFrameRateRanges {
+                        if range.maxFrameRate >= currentFPS && range.minFrameRate <= currentFPS {
+                            if optimalFormat == nil {
+                                optimalFormat = format
+                                highestFrameRateRange = range
+                            } else if let currentMax = highestFrameRateRange?.maxFrameRate, range.maxFrameRate > currentMax {
+                                optimalFormat = format
+                                highestFrameRateRange = range
+                            }
                         }
+                    }
+                }
+            }
+            
+            // Fallback 1: match resolution exactly, pick highest FPS
+            if optimalFormat == nil {
+                for format in camera.formats {
+                    let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                    if dimensions.width == width && dimensions.height == height {
+                        if optimalFormat == nil {
+                            optimalFormat = format
+                        } else {
+                            let currentMax = optimalFormat!.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
+                            let newMax = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
+                            if newMax > currentMax {
+                                optimalFormat = format
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Fallback 2: find closest resolution
+            if optimalFormat == nil {
+                var bestDiff = Int32.max
+                for format in camera.formats {
+                    let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                    let diff = abs(dimensions.width - width) + abs(dimensions.height - height)
+                    if diff < bestDiff {
+                        bestDiff = diff
+                        optimalFormat = format
                     }
                 }
             }
@@ -654,7 +698,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 let targetFPS = min(maxFPS, currentFPS)
                 camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
                 camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
-                print("[+] Cámara configurada a \(targetFPS) FPS en resolución \(width)x\(height).")
+                print("[+] Cámara configurada a \(targetFPS) FPS en resolución \(CMVideoFormatDescriptionGetDimensions(format.formatDescription).width)x\(CMVideoFormatDescriptionGetDimensions(format.formatDescription).height).")
             } else {
                 camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(currentFPS))
                 camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(currentFPS))
@@ -712,11 +756,11 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         
-        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 12_000_000 : (currentResolution == "1080p" ? 4_500_000 : 2_500_000)
+        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 12_000_000 : (currentResolution == "1080p" ? 6_000_000 : 3_500_000)
         let targetBitrate = (rawBitrate as NSNumber) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
-        let limitBytes = ((rawBitrate / 8) as NSNumber) as CFNumber
+        let limitBytes = ((Double(rawBitrate) * 1.5 / 8.0) as NSNumber) as CFNumber
         let limitWindow = (1.0 as NSNumber) as CFNumber
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
