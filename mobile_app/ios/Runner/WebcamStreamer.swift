@@ -644,9 +644,15 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             var optimalFormat: AVCaptureDevice.Format? = nil
             var highestFrameRateRange: AVFrameRateRange? = nil
             
+            // Prioritize: 16:9 aspect ratio, 420v (video range) media subtype, matching dimensions exactly
             for format in camera.formats {
                 let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                if dimensions.width == width && dimensions.height == height {
+                let mediaSubtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+                
+                let is169 = abs(Double(dimensions.width) / Double(dimensions.height) - (16.0 / 9.0)) < 0.1
+                let isVideoRange = (mediaSubtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                
+                if dimensions.width == width && dimensions.height == height && is169 && isVideoRange {
                     for range in format.videoSupportedFrameRateRanges {
                         if range.maxFrameRate >= currentFPS && range.minFrameRate <= currentFPS {
                             if optimalFormat == nil {
@@ -661,11 +667,15 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
             }
             
-            // Fallback 1: match resolution exactly, pick highest FPS
+            // Fallback 1: match resolution exactly, video-range 420v, 16:9, ignore exact FPS constraint
             if optimalFormat == nil {
                 for format in camera.formats {
                     let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                    if dimensions.width == width && dimensions.height == height {
+                    let mediaSubtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+                    let is169 = abs(Double(dimensions.width) / Double(dimensions.height) - (16.0 / 9.0)) < 0.1
+                    let isVideoRange = (mediaSubtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                    
+                    if dimensions.width == width && dimensions.height == height && is169 && isVideoRange {
                         if optimalFormat == nil {
                             optimalFormat = format
                         } else {
@@ -679,17 +689,9 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
             }
             
-            // Fallback 2: find closest resolution
+            // Fallback 2: use the default activeFormat selected by iOS sessionPreset (always high-quality video-optimized format matching the preset)
             if optimalFormat == nil {
-                var bestDiff = Int32.max
-                for format in camera.formats {
-                    let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                    let diff = abs(dimensions.width - width) + abs(dimensions.height - height)
-                    if diff < bestDiff {
-                        bestDiff = diff
-                        optimalFormat = format
-                    }
-                }
+                optimalFormat = camera.activeFormat
             }
             
             if let format = optimalFormat {

@@ -65,6 +65,10 @@ namespace desktop_app
         private bool _faceDetected = false;
         private double _smoothZoom = 1.0;
         private DateTime _lastFaceDetectedTime = DateTime.MinValue;
+        private bool _isSpotlightEnabled = false;
+        private double _spotlightIntensityValue = 48.0;
+        private bool _isAutoFramingEnabled = false;
+        private bool _isAutoFramingZoomEnabled = false;
 
         public MainWindow()
         {
@@ -115,6 +119,13 @@ namespace desktop_app
             string timeStamp = DateTime.Now.ToString("HH:mm:ss");
             LogTextBox.AppendText($"[{timeStamp}] {message}\n");
             LogTextBox.ScrollToEnd();
+
+            try
+            {
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "camo_log.txt");
+                File.AppendAllText(logPath, $"[{timeStamp}] {message}\r\n");
+            }
+            catch { }
         }
 
         private void PollDevices()
@@ -985,10 +996,9 @@ namespace desktop_app
             TriggerFaceDetection(inputRgba, width, height);
 
             // 1. Apply Spotlight (Face Highlight)
-            if (SpotlightCheckBox.IsChecked == true && _faceDetected)
+            if (_isSpotlightEnabled && _faceDetected)
             {
-                double intensity = SpotlightSlider.Value;
-                ApplySpotlightInPlace(processed, width, height, _smoothFaceX, _smoothFaceY, _smoothFaceW, _smoothFaceH, intensity);
+                ApplySpotlightInPlace(processed, width, height, _smoothFaceX, _smoothFaceY, _smoothFaceW, _smoothFaceH, _spotlightIntensityValue);
             }
 
             // 2. Apply Mirror
@@ -1010,10 +1020,9 @@ namespace desktop_app
             }
 
             // 5. Apply Auto Framing (Zoom & Center on Face)
-            if (AutoFramingCheckBox.IsChecked == true && _faceDetected)
+            if (_isAutoFramingEnabled && _faceDetected)
             {
-                bool useZoom = AutoFramingZoomCheckBox.IsChecked == true;
-                processed = ApplyAutoFraming(processed, outWidth, outHeight, _smoothFaceX * (outWidth / (double)width), _smoothFaceY * (outHeight / (double)height), _smoothFaceW * (outWidth / (double)width), _smoothFaceH * (outHeight / (double)height), useZoom, out outWidth, out outHeight);
+                processed = ApplyAutoFraming(processed, outWidth, outHeight, _smoothFaceX * (outWidth / (double)width), _smoothFaceY * (outHeight / (double)height), _smoothFaceW * (outWidth / (double)width), _smoothFaceH * (outHeight / (double)height), _isAutoFramingZoomEnabled, out outWidth, out outHeight);
             }
 
             return processed;
@@ -1412,9 +1421,30 @@ namespace desktop_app
 
         private void AutoFramingControl_Changed(object sender, RoutedEventArgs e)
         {
-            if (AutoFramingZoomCheckBox != null && AutoFramingCheckBox != null)
+            if (AutoFramingCheckBox != null)
             {
-                AutoFramingZoomCheckBox.IsEnabled = AutoFramingCheckBox.IsChecked == true;
+                _isAutoFramingEnabled = AutoFramingCheckBox.IsChecked == true;
+            }
+            if (AutoFramingZoomCheckBox != null)
+            {
+                _isAutoFramingZoomEnabled = AutoFramingZoomCheckBox.IsChecked == true;
+                AutoFramingZoomCheckBox.IsEnabled = _isAutoFramingEnabled;
+            }
+        }
+
+        private void SpotlightCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (SpotlightCheckBox != null)
+            {
+                _isSpotlightEnabled = SpotlightCheckBox.IsChecked == true;
+            }
+        }
+
+        private void SpotlightSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (SpotlightSlider != null)
+            {
+                _spotlightIntensityValue = SpotlightSlider.Value;
             }
         }
 

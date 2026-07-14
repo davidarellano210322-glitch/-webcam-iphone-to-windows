@@ -461,10 +461,10 @@
                                 </Border>
 
                                 <!-- Spotlight controls -->
-                                <CheckBox x:Name="SpotlightCheckBox" Content="Spotlight Face Tracking" Margin="0,0,0,6"/>
+                                <CheckBox x:Name="SpotlightCheckBox" Content="Spotlight Face Tracking" Margin="0,0,0,6" Checked="SpotlightCheckBox_Changed" Unchecked="SpotlightCheckBox_Changed"/>
                                 <Grid Margin="0,0,0,15">
                                     <TextBlock Text="Intensidad:" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
-                                    <Slider x:Name="SpotlightSlider" Minimum="0" Maximum="100" Value="48" Width="170" HorizontalAlignment="Right"/>
+                                    <Slider x:Name="SpotlightSlider" Minimum="0" Maximum="100" Value="48" Width="170" HorizontalAlignment="Right" ValueChanged="SpotlightSlider_ValueChanged"/>
                                 </Grid>
 
                                 <!-- Auto Framing controls -->
