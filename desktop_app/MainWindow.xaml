@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Antigravity Camo Studio Pro" Height="760" Width="1280"
         Background="#080c14" Foreground="#f8fafc"
-        WindowStartupLocation="CenterScreen" Icon="App.xaml">
+        WindowStartupLocation="CenterScreen">
     
     <Window.Resources>
         <!-- Accent Color Palette -->
@@ -150,6 +150,14 @@
                     
                     <Button x:Name="StartTunnelBtn" Content="Iniciar Servidor USB" Background="#e11d48" BorderThickness="0" 
                             Foreground="White" FontSize="11" FontWeight="Bold" Padding="12,6" Click="StartTunnelBtn_Click">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="6"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    <Button x:Name="RecordBtn" Content="Grabar (REC)" Background="#e11d48" BorderThickness="0" 
+                            Foreground="White" FontSize="11" FontWeight="Bold" Padding="12,6" Margin="10,0,0,0" Click="RecordBtn_Click" Visibility="Collapsed">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="6"/>
@@ -347,11 +355,20 @@
 
                                 <!-- Filters -->
                                 <TextBlock Text="Filter" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
-                                <ComboBox x:Name="FilterComboBox" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="8,6" Margin="0,0,0,12">
-                                    <ComboBoxItem Content="None" IsSelected="True"/>
-                                    <ComboBoxItem Content="Mono"/>
-                                    <ComboBoxItem Content="Sepia"/>
+                                <ComboBox x:Name="FilterComboBox" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="8,6" Margin="0,0,0,12" SelectionChanged="FilterComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="None" Tag="none" IsSelected="True"/>
+                                    <ComboBoxItem Content="Monocromo" Tag="mono"/>
+                                    <ComboBoxItem Content="Sepia" Tag="sepia"/>
+                                    <ComboBoxItem Content="Negativo" Tag="negative"/>
+                                    <ComboBoxItem Content="Vintage (Warm)" Tag="vintage"/>
+                                    <ComboBoxItem Content="Cool Blue" Tag="cool"/>
                                 </ComboBox>
+
+                                <!-- Filter Intensity slider -->
+                                <TextBlock Text="Intensidad de Filtro" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,12">
+                                    <Slider x:Name="FilterIntensitySlider" Minimum="0" Maximum="100" Value="100" SmallChange="5" ValueChanged="FilterIntensitySlider_ValueChanged"/>
+                                </Grid>
 
                                 <!-- AR settings -->
                                 <TextBlock Text="AR Video" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
@@ -359,6 +376,22 @@
                                     <ComboBoxItem Content="Normal" IsSelected="True"/>
                                     <ComboBoxItem Content="Zoom Fit"/>
                                 </ComboBox>
+
+                                <!-- Mirror & Rotation -->
+                                <TextBlock Text="Transformaciones" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox x:Name="MirrorCheckBox" Content="Espejo" Grid.Column="0" VerticalAlignment="Center" Checked="TransformControl_Changed" Unchecked="TransformControl_Changed"/>
+                                    <ComboBox x:Name="RotationComboBox" Grid.Column="1" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="5,3" SelectionChanged="TransformControl_Changed">
+                                        <ComboBoxItem Content="Rotación: 0°" Tag="0" IsSelected="True"/>
+                                        <ComboBoxItem Content="Rotación: 90°" Tag="90"/>
+                                        <ComboBoxItem Content="Rotación: 180°" Tag="180"/>
+                                        <ComboBoxItem Content="Rotación: 270°" Tag="270"/>
+                                    </ComboBox>
+                                </Grid>
                             </StackPanel>
                         </Expander>
 
@@ -366,25 +399,25 @@
                         <Expander Header="Image adjustments" IsExpanded="True" Foreground="#f8fafc" FontWeight="SemiBold" Margin="0,0,0,15">
                             <StackPanel Margin="5,8,5,0">
                                 <!-- Exposure settings -->
-                                <CheckBox x:Name="ExposureCheckBox" Content="Custom Exposure" Margin="0,0,0,6"/>
+                                <CheckBox x:Name="ExposureCheckBox" Content="Custom Exposure" Margin="0,0,0,6" Checked="ExposureControl_Changed" Unchecked="ExposureControl_Changed"/>
                                 <Grid Margin="0,0,0,6">
-                                    <TextBlock Text="Velocidad:" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
-                                    <Slider x:Name="ShutterSlider" Minimum="0" Maximum="100" Value="40" Width="170" HorizontalAlignment="Right" IsEnabled="False"/>
+                                    <TextBlock Text="Velocidad (ms):" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
+                                    <Slider x:Name="ShutterSlider" Minimum="1" Maximum="200" Value="33" Width="170" HorizontalAlignment="Right" IsEnabled="False" ValueChanged="ExposureControl_Changed"/>
                                 </Grid>
                                 <Grid Margin="0,0,0,15">
                                     <TextBlock Text="ISO Gain:" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
-                                    <Slider x:Name="IsoSlider" Minimum="0" Maximum="1000" Value="296" Width="170" HorizontalAlignment="Right" IsEnabled="False"/>
+                                    <Slider x:Name="IsoSlider" Minimum="50" Maximum="1600" Value="300" Width="170" HorizontalAlignment="Right" IsEnabled="False" ValueChanged="ExposureControl_Changed"/>
                                 </Grid>
 
                                 <!-- White Balance -->
-                                <CheckBox x:Name="WhiteBalanceCheckBox" Content="White Balance" Margin="0,0,0,6"/>
+                                <CheckBox x:Name="WhiteBalanceCheckBox" Content="White Balance" Margin="0,0,0,6" Checked="WhiteBalanceControl_Changed" Unchecked="WhiteBalanceControl_Changed"/>
                                 <Grid Margin="0,0,0,6">
                                     <TextBlock Text="Temp:" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
-                                    <Slider x:Name="TemperatureSlider" Minimum="2000" Maximum="8000" Value="5744" Width="170" HorizontalAlignment="Right" IsEnabled="False"/>
+                                    <Slider x:Name="TemperatureSlider" Minimum="2000" Maximum="8000" Value="5000" Width="170" HorizontalAlignment="Right" IsEnabled="False" ValueChanged="WhiteBalanceControl_Changed"/>
                                 </Grid>
                                 <Grid Margin="0,0,0,15">
                                     <TextBlock Text="Matiz (Tint):" FontSize="11" Foreground="#64748b" VerticalAlignment="Center"/>
-                                    <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" Value="-5" Width="170" HorizontalAlignment="Right" IsEnabled="False"/>
+                                    <Slider x:Name="TintSlider" Minimum="-150" Maximum="150" Value="0" Width="170" HorizontalAlignment="Right" IsEnabled="False" ValueChanged="WhiteBalanceControl_Changed"/>
                                 </Grid>
 
                                 <!-- Flash level / Torch control -->
@@ -396,6 +429,12 @@
                                 <TextBlock Text="Brightness" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
                                 <Grid Margin="0,0,0,10">
                                     <Slider x:Name="BrightnessSlider" Minimum="-2.0" Maximum="2.0" Value="0.0" SmallChange="0.1" ValueChanged="BrightnessSlider_ValueChanged"/>
+                                </Grid>
+
+                                <!-- Zoom slider -->
+                                <TextBlock Text="Zoom Digital" FontSize="10" Foreground="#64748b" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Slider x:Name="ZoomSlider" Minimum="1.0" Maximum="5.0" Value="1.0" SmallChange="0.1" ValueChanged="ZoomSlider_ValueChanged"/>
                                 </Grid>
                             </StackPanel>
                         </Expander>

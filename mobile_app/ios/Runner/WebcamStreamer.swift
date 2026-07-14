@@ -219,6 +219,31 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                         self.setExposure(bias: Float(val))
                     }
                     
+                case "setExposure":
+                    if let mode = json["mode"] as? String {
+                        if mode == "auto" {
+                            self.setExposureModeAuto()
+                        } else if let duration = json["shutter"] as? Double,
+                                  let iso = json["iso"] as? Double {
+                            self.setExposureModeCustom(shutterDurationMs: duration, iso: Float(iso))
+                        }
+                    }
+
+                case "setWhiteBalance":
+                    if let mode = json["mode"] as? String {
+                        if mode == "auto" {
+                            self.setWhiteBalanceModeAuto()
+                        } else if let temp = json["temp"] as? Double,
+                                  let tint = json["tint"] as? Double {
+                            self.setWhiteBalanceManual(temp: Float(temp), tint: Float(tint))
+                        }
+                    }
+
+                case "setZoom":
+                    if let val = json["val"] as? Double {
+                        self.setZoom(factor: Float(val))
+                    }
+
                 case "setResolution":
                     if let val = json["val"] as? String,
                        let fps = json["fps"] as? Double {
@@ -325,6 +350,96 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 print("[+] Brillo de exposición configurado a: \(clampedBias)")
             } catch {
                 print("[-] Error configurando exposición: \(error)")
+            }
+        }
+    }
+
+    func setExposureModeAuto() {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                    print("[+] Exposición configurada a: Auto")
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("[-] Error configurando exposición auto: \(error)")
+            }
+        }
+    }
+
+    func setExposureModeCustom(shutterDurationMs: Double, iso: Float) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                // Convert duration in milliseconds to CMTime
+                let duration = CMTime(value: CMTimeValue(max(1.0, shutterDurationMs)), timescale: 1000)
+                let clampedDuration = max(camera.activeFormat.minExposureDuration, min(camera.activeFormat.maxExposureDuration, duration))
+                let clampedISO = max(camera.activeFormat.minISO, min(camera.activeFormat.maxISO, iso))
+                
+                if camera.isExposureModeSupported(.custom) {
+                    camera.setExposureModeCustom(duration: clampedDuration, iso: clampedISO, completionHandler: nil)
+                    print("[+] Exposición custom configurada: Shutter=\(shutterDurationMs)ms, ISO=\(clampedISO)")
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("[-] Error configurando exposición custom: \(error)")
+            }
+        }
+    }
+
+    func setWhiteBalanceModeAuto() {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    camera.whiteBalanceMode = .continuousAutoWhiteBalance
+                    print("[+] Balance de blancos configurado a: Auto")
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("[-] Error configurando balance de blancos auto: \(error)")
+            }
+        }
+    }
+
+    func setWhiteBalanceManual(temp: Float, tint: Float) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                let tempTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: temp, tint: tint)
+                var gains = camera.deviceWhiteBalanceGains(for: tempTint)
+                
+                let maxGain = camera.maxWhiteBalanceGain
+                gains.redGain = max(1.0, min(maxGain, gains.redGain))
+                gains.greenGain = max(1.0, min(maxGain, gains.greenGain))
+                gains.blueGain = max(1.0, min(maxGain, gains.blueGain))
+                
+                camera.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
+                camera.unlockForConfiguration()
+                print("[+] Balance de blancos manual: Temp=\(temp), Tint=\(tint)")
+            } catch {
+                print("[-] Error configurando balance de blancos manual: \(error)")
+            }
+        }
+    }
+
+    func setZoom(factor: Float) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                let clampedFactor = max(1.0, min(camera.activeFormat.videoMaxZoomFactor, CGFloat(factor)))
+                camera.videoZoomFactor = clampedFactor
+                camera.unlockForConfiguration()
+                print("[+] Zoom configurado a: \(clampedFactor)x")
+            } catch {
+                print("[-] Error configurando zoom: \(error)")
             }
         }
     }

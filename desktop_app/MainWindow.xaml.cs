@@ -36,6 +36,17 @@ namespace desktop_app
         
         private WriteableBitmap? _previewBitmap;
         private int _isRenderingPreview = 0;
+        
+        private string _activeFilter = "none";
+        private double _filterIntensity = 1.0;
+        private bool _isMirrorActive = false;
+        private int _rotationAngle = 0;
+        
+        private bool _isRecording = false;
+        private Process? _ffmpegRecorderProcess;
+        private Stream? _ffmpegRecorderStdin;
+        private int _recordWidth = 1280;
+        private int _recordHeight = 720;
 
         public MainWindow()
         {
@@ -75,6 +86,11 @@ namespace desktop_app
 
         private void Log(string message)
         {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => Log(message));
+                return;
+            }
             string timeStamp = DateTime.Now.ToString("HH:mm:ss");
             LogTextBox.AppendText($"[{timeStamp}] {message}\n");
             LogTextBox.ScrollToEnd();
@@ -171,12 +187,20 @@ namespace desktop_app
             // 3. Start direct connection task for dynamic control commands (Port 6001)
             Log($"[*] Conectando puerto de control bidireccional (iPhone:{controlPort})...");
             _ = Task.Run(() => ConnectControlChannelAsync(_connectedDeviceUdid!, controlPort, _tunnelCts.Token));
+
+            RecordBtn.Visibility = Visibility.Visible;
         }
 
         private void StopTunnel()
         {
             _isTunnelRunning = false;
             _tunnelCts?.Cancel();
+
+            // Stop local recording if active
+            if (_isRecording)
+            {
+                StopRecording();
+            }
             
             // Close FFmpeg process
             if (_ffmpegProcess != null && !_ffmpegProcess.HasExited)
@@ -204,6 +228,12 @@ namespace desktop_app
                     StartTunnelBtn.Content = "Iniciar Servidor USB";
                     StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
                 }
+                if (RecordBtn != null)
+                {
+                    RecordBtn.Visibility = Visibility.Collapsed;
+                    RecordBtn.Content = "Grabar (REC)";
+                    RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
+                }
                 if (PlaceholderGrid != null)
                 {
                     PlaceholderGrid.Visibility = Visibility.Visible;
@@ -225,6 +255,16 @@ namespace desktop_app
         private void StartFFmpegDecoder(CancellationToken token)
         {
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
+
+            // Clean up any existing zombie ffmpeg processes first to free up port 6002
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("ffmpeg"))
+                {
+                    try { p.Kill(); p.WaitForExit(1000); } catch { }
+                }
+            }
+            catch { }
             
             // Reemplazo de stdin: Escuchamos en socket local TCP puerto 6002
             string args = "-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i tcp://127.0.0.1:6002?listen -vsync 0 -threads 1 -vf scale=1280:720 -f rawvideo -pix_fmt rgba pipe:1";
@@ -308,27 +348,49 @@ namespace desktop_app
 
                     if (totalRead == frameSize)
                     {
-                        _virtualCameraBridge.WriteFrame(width, height, frameBuffer);
+                        int outWidth, outHeight;
+                        byte[] processedFrame = ApplyFrameProcessing(frameBuffer, width, height, out outWidth, out outHeight);
+
+                        _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame);
+
+                        // Feed the recorder if active
+                        if (_isRecording && _ffmpegRecorderStdin != null && outWidth == _recordWidth && outHeight == _recordHeight)
+                        {
+                            try
+                            {
+                                _ffmpegRecorderStdin.Write(processedFrame, 0, processedFrame.Length);
+                            }
+                            catch (Exception recEx)
+                            {
+                                Log($"[-] Error al escribir frame en grabadora: {recEx.Message}");
+                            }
+                        }
 
                         if (Interlocked.CompareExchange(ref _isRenderingPreview, 1, 0) == 0)
                         {
-                            byte[] previewCopy = new byte[frameSize];
-                            for (int i = 0; i < frameSize; i += 4)
+                            int processedSize = outWidth * outHeight * 4;
+                            byte[] previewCopy = new byte[processedSize];
+                            for (int i = 0; i < processedSize; i += 4)
                             {
-                                previewCopy[i] = frameBuffer[i + 2];     // B
-                                previewCopy[i + 1] = frameBuffer[i + 1]; // G
-                                previewCopy[i + 2] = frameBuffer[i];     // R
-                                previewCopy[i + 3] = frameBuffer[i + 3]; // A
+                                previewCopy[i] = processedFrame[i + 2];     // B
+                                previewCopy[i + 1] = processedFrame[i + 1]; // G
+                                previewCopy[i + 2] = processedFrame[i];     // R
+                                previewCopy[i + 3] = processedFrame[i + 3]; // A
                             }
                             
                             Dispatcher.BeginInvoke(new Action(() =>
                             {
                                 try
                                 {
-                                    _previewBitmap?.WritePixels(
-                                        new System.Windows.Int32Rect(0, 0, width, height),
+                                    if (_previewBitmap == null || _previewBitmap.PixelWidth != outWidth || _previewBitmap.PixelHeight != outHeight)
+                                    {
+                                        _previewBitmap = new WriteableBitmap(outWidth, outHeight, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+                                        VideoPreviewImage.Source = _previewBitmap;
+                                    }
+                                    _previewBitmap.WritePixels(
+                                        new System.Windows.Int32Rect(0, 0, outWidth, outHeight),
                                         previewCopy,
-                                        width * 4,
+                                        outWidth * 4,
                                         0
                                     );
                                 }
@@ -653,6 +715,374 @@ namespace desktop_app
             await SendControlCommandAsync(cmd);
         }
 
+        private async void ExposureControl_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isUpdatingUi || ExposureCheckBox == null || ShutterSlider == null || IsoSlider == null || _activeControlConn == null) return;
+
+            bool isCustom = ExposureCheckBox.IsChecked == true;
+            ShutterSlider.IsEnabled = isCustom;
+            IsoSlider.IsEnabled = isCustom;
+
+            string cmd;
+            if (isCustom)
+            {
+                double shutter = ShutterSlider.Value; // milliseconds
+                double iso = IsoSlider.Value;
+                cmd = $"{{\"cmd\":\"setExposure\",\"mode\":\"manual\",\"shutter\":{shutter:F2},\"iso\":{iso:F2}}}";
+            }
+            else
+            {
+                cmd = "{\"cmd\":\"setExposure\",\"mode\":\"auto\"}";
+            }
+            await SendControlCommandAsync(cmd);
+        }
+
+        private async void WhiteBalanceControl_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isUpdatingUi || WhiteBalanceCheckBox == null || TemperatureSlider == null || TintSlider == null || _activeControlConn == null) return;
+
+            bool isManual = WhiteBalanceCheckBox.IsChecked == true;
+            TemperatureSlider.IsEnabled = isManual;
+            TintSlider.IsEnabled = isManual;
+
+            string cmd;
+            if (isManual)
+            {
+                double temp = TemperatureSlider.Value;
+                double tint = TintSlider.Value;
+                cmd = $"{{\"cmd\":\"setWhiteBalance\",\"mode\":\"manual\",\"temp\":{temp:F2},\"tint\":{tint:F2}}}";
+            }
+            else
+            {
+                cmd = "{\"cmd\":\"setWhiteBalance\",\"mode\":\"auto\"}";
+            }
+            await SendControlCommandAsync(cmd);
+        }
+
+        private async void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_isUpdatingUi || ZoomSlider == null || _activeControlConn == null) return;
+
+            double val = ZoomSlider.Value;
+            string cmd = $"{{\"cmd\":\"setZoom\",\"val\":{val:F2}}}";
+            await SendControlCommandAsync(cmd);
+        }
+        private void FilterComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (FilterComboBox != null && FilterComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag)
+            {
+                _activeFilter = tag;
+            }
+        }
+
+        private void FilterIntensitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (FilterIntensitySlider != null)
+            {
+                _filterIntensity = FilterIntensitySlider.Value / 100.0;
+            }
+        }
+
+        private void RecordBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isRecording)
+            {
+                StopRecording();
+            }
+            else
+            {
+                int currentW = 1280;
+                int currentH = 720;
+                if (_previewBitmap != null)
+                {
+                    currentW = _previewBitmap.PixelWidth;
+                    currentH = _previewBitmap.PixelHeight;
+                }
+                StartRecording(currentW, currentH);
+            }
+        }
+
+        private void StartRecording(int width, int height)
+        {
+            _recordWidth = width;
+            _recordHeight = height;
+
+            try
+            {
+                string videosFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+                if (string.IsNullOrEmpty(videosFolder))
+                {
+                    videosFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Recordings");
+                }
+
+                if (!Directory.Exists(videosFolder))
+                {
+                    Directory.CreateDirectory(videosFolder);
+                }
+
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string filePath = Path.Combine(videosFolder, $"CamoStream_{timestamp}.mp4");
+
+                Log($"[*] Iniciando grabación local en: {filePath}");
+
+                // FFmpeg command to record raw video to mp4 with H.264 compression
+                string args = $"-f rawvideo -pix_fmt rgba -s {width}x{height} -r 30 -i pipe:0 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -y \"{filePath}\"";
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "ffmpeg.exe",
+                    Arguments = args,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false
+                };
+
+                _ffmpegRecorderProcess = Process.Start(startInfo);
+                if (_ffmpegRecorderProcess == null)
+                {
+                    throw new Exception("No se pudo iniciar ffmpeg.exe para la grabación.");
+                }
+
+                _ffmpegRecorderStdin = _ffmpegRecorderProcess.StandardInput.BaseStream;
+                _isRecording = true;
+
+                RecordBtn.Content = "Detener REC";
+                RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
+                Log("[+] Grabación de video iniciada con éxito.");
+            }
+            catch (Exception ex)
+            {
+                Log($"[-] ERROR al iniciar grabación: {ex.Message}");
+                StopRecording();
+            }
+        }
+
+        private void StopRecording()
+        {
+            _isRecording = false;
+
+            if (_ffmpegRecorderStdin != null)
+            {
+                try { _ffmpegRecorderStdin.Close(); } catch { }
+                _ffmpegRecorderStdin = null;
+            }
+
+            if (_ffmpegRecorderProcess != null)
+            {
+                try
+                {
+                    if (!_ffmpegRecorderProcess.HasExited)
+                    {
+                        _ffmpegRecorderProcess.WaitForExit(3000);
+                        if (!_ffmpegRecorderProcess.HasExited)
+                        {
+                            _ffmpegRecorderProcess.Kill();
+                        }
+                    }
+                }
+                catch { }
+                _ffmpegRecorderProcess.Dispose();
+                _ffmpegRecorderProcess = null;
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                if (RecordBtn != null)
+                {
+                    RecordBtn.Content = "Grabar (REC)";
+                    RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
+                }
+            });
+
+            Log("[+] Grabación guardada y finalizada correctamente.");
+        }
+
+        private void TransformControl_Changed(object sender, RoutedEventArgs e)
+        {
+            if (MirrorCheckBox != null)
+            {
+                _isMirrorActive = MirrorCheckBox.IsChecked == true;
+            }
+            if (RotationComboBox != null && RotationComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag && int.TryParse(tag, out int angle))
+            {
+                _rotationAngle = angle;
+            }
+        }
+
+        private byte[] ApplyFrameProcessing(byte[] inputRgba, int width, int height, out int outWidth, out int outHeight)
+        {
+            outWidth = width;
+            outHeight = height;
+            byte[] processed = inputRgba;
+
+            // 1. Apply Mirror
+            if (_isMirrorActive)
+            {
+                processed = ApplyMirror(processed, width, height);
+            }
+
+            // 2. Apply Rotation
+            if (_rotationAngle != 0)
+            {
+                processed = ApplyRotation(processed, width, height, _rotationAngle, out outWidth, out outHeight);
+            }
+
+            // 3. Apply Filters
+            if (_activeFilter != "none" && _filterIntensity > 0.0)
+            {
+                ApplyFilterInPlace(processed, _activeFilter, _filterIntensity);
+            }
+
+            return processed;
+        }
+
+        private byte[] ApplyMirror(byte[] rgba, int width, int height)
+        {
+            byte[] output = new byte[rgba.Length];
+            int rowSize = width * 4;
+            for (int y = 0; y < height; y++)
+            {
+                int srcRowStart = y * rowSize;
+                for (int x = 0; x < width; x++)
+                {
+                    int srcPixel = srcRowStart + x * 4;
+                    int destPixel = srcRowStart + (width - 1 - x) * 4;
+                    output[destPixel] = rgba[srcPixel];
+                    output[destPixel + 1] = rgba[srcPixel + 1];
+                    output[destPixel + 2] = rgba[srcPixel + 2];
+                    output[destPixel + 3] = rgba[srcPixel + 3];
+                }
+            }
+            return output;
+        }
+
+        private byte[] ApplyRotation(byte[] rgba, int width, int height, int angle, out int outWidth, out int outHeight)
+        {
+            if (angle == 90)
+            {
+                outWidth = height;
+                outHeight = width;
+                byte[] output = new byte[rgba.Length];
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int srcIndex = (y * width + x) * 4;
+                        int destX = height - 1 - y;
+                        int destY = x;
+                        int destIndex = (destY * outWidth + destX) * 4;
+                        output[destIndex] = rgba[srcIndex];
+                        output[destIndex + 1] = rgba[srcIndex + 1];
+                        output[destIndex + 2] = rgba[srcIndex + 2];
+                        output[destIndex + 3] = rgba[srcIndex + 3];
+                    }
+                }
+                return output;
+            }
+            else if (angle == 180)
+            {
+                outWidth = width;
+                outHeight = height;
+                byte[] output = new byte[rgba.Length];
+                int totalPixels = width * height;
+                for (int i = 0; i < totalPixels; i++)
+                {
+                    int srcIndex = i * 4;
+                    int destIndex = (totalPixels - 1 - i) * 4;
+                    output[destIndex] = rgba[srcIndex];
+                    output[destIndex + 1] = rgba[srcIndex + 1];
+                    output[destIndex + 2] = rgba[srcIndex + 2];
+                    output[destIndex + 3] = rgba[srcIndex + 3];
+                }
+                return output;
+            }
+            else if (angle == 270)
+            {
+                outWidth = height;
+                outHeight = width;
+                byte[] output = new byte[rgba.Length];
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int srcIndex = (y * width + x) * 4;
+                        int destX = y;
+                        int destY = width - 1 - x;
+                        int destIndex = (destY * outWidth + destX) * 4;
+                        output[destIndex] = rgba[srcIndex];
+                        output[destIndex + 1] = rgba[srcIndex + 1];
+                        output[destIndex + 2] = rgba[srcIndex + 2];
+                        output[destIndex + 3] = rgba[srcIndex + 3];
+                    }
+                }
+                return output;
+            }
+            else
+            {
+                outWidth = width;
+                outHeight = height;
+                return rgba;
+            }
+        }
+
+        private void ApplyFilterInPlace(byte[] rgba, string filter, double intensity)
+        {
+            for (int i = 0; i < rgba.Length; i += 4)
+            {
+                byte r = rgba[i];
+                byte g = rgba[i + 1];
+                byte b = rgba[i + 2];
+
+                byte targetR = r;
+                byte targetG = g;
+                byte targetB = b;
+
+                switch (filter)
+                {
+                    case "mono":
+                        byte gray = (byte)(0.299 * r + 0.587 * g + 0.114 * b);
+                        targetR = gray;
+                        targetG = gray;
+                        targetB = gray;
+                        break;
+                    case "sepia":
+                        targetR = (byte)Math.Min(255, 0.393 * r + 0.769 * g + 0.189 * b);
+                        targetG = (byte)Math.Min(255, 0.349 * r + 0.686 * g + 0.168 * b);
+                        targetB = (byte)Math.Min(255, 0.272 * r + 0.534 * g + 0.131 * b);
+                        break;
+                    case "negative":
+                        targetR = (byte)(255 - r);
+                        targetG = (byte)(255 - g);
+                        targetB = (byte)(255 - b);
+                        break;
+                    case "vintage":
+                        targetR = (byte)Math.Min(255, r * 1.1 + 10);
+                        targetG = (byte)Math.Min(255, g * 1.05 + 5);
+                        targetB = (byte)(b * 0.9);
+                        break;
+                    case "cool":
+                        targetR = (byte)(r * 0.9);
+                        targetG = (byte)Math.Min(255, g * 1.02);
+                        targetB = (byte)Math.Min(255, b * 1.15 + 10);
+                        break;
+                }
+
+                if (intensity < 1.0)
+                {
+                    rgba[i] = (byte)(r + (targetR - r) * intensity);
+                    rgba[i + 1] = (byte)(g + (targetG - g) * intensity);
+                    rgba[i + 2] = (byte)(b + (targetB - b) * intensity);
+                }
+                else
+                {
+                    rgba[i] = targetR;
+                    rgba[i + 1] = targetG;
+                    rgba[i + 2] = targetB;
+                }
+            }
+        }
         private iDeviceError ReadExactBytes(iDeviceConnectionHandle connection, byte[] targetBuffer, int length, CancellationToken token)
         {
             var idevice = LibiMobileDevice.Instance.iDevice;
