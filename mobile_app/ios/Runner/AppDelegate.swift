@@ -7,45 +7,41 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
-    
-    if let engine = self.flutterEngine {
-      let controlChannel = FlutterMethodChannel(name: "com.antigravity.webcam/control",
-                                                binaryMessenger: engine.binaryMessenger)
-      
-      controlChannel.setMethodCallHandler({
-        (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
-        if call.method == "startServer" {
-          if #available(iOS 12.0, *) {
-            WebcamStreamer.shared.startServer()
-            result("Servidor iniciado")
-          } else {
-            result(FlutterError(code: "UNSUPPORTED", message: "iOS 12 o superior es requerido", details: nil))
-          }
-        } else if call.method == "stopServer" {
-          if #available(iOS 12.0, *) {
-            WebcamStreamer.shared.stopServer()
-            result("Servidor detenido")
-          } else {
-            result("Detenido")
-          }
-        } else if call.method == "switchCamera" {
-          if #available(iOS 12.0, *) {
-            WebcamStreamer.shared.switchCamera()
-            result("Cámara cambiada")
-          } else {
-            result("No soportado")
-          }
-        } else {
-          result(FlutterMethodNotImplemented)
-        }
-      })
-    }
-
-    return result
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    
+    let controlChannel = FlutterMethodChannel(name: "com.antigravity.webcam/control",
+                                              binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    
+    controlChannel.setMethodCallHandler({
+      (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
+      if call.method == "startServer" {
+        if #available(iOS 12.0, *) {
+          WebcamStreamer.shared.startServer()
+          result("Servidor iniciado")
+        } else {
+          result(FlutterError(code: "UNSUPPORTED", message: "iOS 12 o superior es requerido", details: nil))
+        }
+      } else if call.method == "stopServer" {
+        if #available(iOS 12.0, *) {
+          WebcamStreamer.shared.stopServer()
+          result("Servidor detenido")
+        } else {
+          result("Detenido")
+        }
+      } else if call.method == "switchCamera" {
+        if #available(iOS 12.0, *) {
+          WebcamStreamer.shared.switchCamera()
+          result("Cámara cambiada")
+        } else {
+          result("No soportado")
+        }
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    })
   }
 }
