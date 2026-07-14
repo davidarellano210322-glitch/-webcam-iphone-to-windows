@@ -216,7 +216,11 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             encoderSpecification: nil,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
-            outputCallback: compressionCallback,
+            outputCallback: { (outputCallbackRefCon, sourceFrameRefCon, status, infoFlags, sampleBuffer) in
+                guard status == noErr, let sampleBuffer = sampleBuffer else { return }
+                let streamer = Unmanaged<WebcamStreamer>.fromOpaque(outputCallbackRefCon!).takeUnreferencedValue()
+                streamer.sendCompressedFrame(sampleBuffer)
+            },
             refcon: Unmanaged.passUnreferenced(self).toOpaque(),
             compressionSessionOut: &compressionSession
         )
@@ -259,20 +263,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         )
     }
     
-    // Callback de VideoToolbox: se ejecuta cuando se comprime un frame a H.264
-    private let compressionCallback: VTCompressionOutputCallback = { (
-        outputCallbackRefCon,
-        sourceFrameRefCon,
-        status,
-        infoFlags,
-        sampleBuffer
-    ) in
-        guard status == noErr, let sampleBuffer = sampleBuffer else { return }
-        
-        // Obtener el puntero al objeto WebcamStreamer
-        let streamer = Unmanaged<WebcamStreamer>.fromOpaque(outputCallbackRefCon!).takeUnreferencedValue()
-        streamer.sendCompressedFrame(sampleBuffer)
-    }
     
     // Enviar el frame H.264 codificado por el socket TCP
     private func sendCompressedFrame(_ sampleBuffer: CMSampleBuffer) {
@@ -333,13 +323,12 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     // Función auxiliar para saber si es un Keyframe
     private func CFAttachmentsGetKeyframeStatus(_ sampleBuffer: CMSampleBuffer) -> Bool {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[CFString: Any]],
-              let attachment = attachments.first else {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [CFDictionary],
+              let attachment = attachments.first as? [String: Any] else {
             return false
         }
         
-        // Si no depende de otros frames, es un Keyframe
-        if let dependsOnOthers = attachment[kCMSampleAttachmentKey_DependsOnOthers] as? Bool {
+        if let dependsOnOthers = attachment[kCMSampleAttachmentKey_DependsOnOthers as String] as? Bool {
             return dependsOnOthers
         }
         return false
