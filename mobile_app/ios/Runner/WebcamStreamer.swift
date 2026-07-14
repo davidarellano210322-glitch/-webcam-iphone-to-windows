@@ -178,22 +178,36 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 session.addOutput(output)
             }
             
-            // Ajustar FPS de la cámara a 60 FPS si es compatible, si no a 30 FPS
+            // Ajustar FPS de la cámara a 60 FPS si es compatible en 1280x720, si no a 30 FPS
             try camera.lockForConfiguration()
-            let optimalFormat = camera.formats.first { format in
-                let ranges = format.videoSupportedFrameRateRanges
-                return ranges.first?.maxFrameRate == 60.0
+            
+            var optimalFormat: AVCaptureDevice.Format? = nil
+            for format in camera.formats {
+                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                if dimensions.width == 1280 && dimensions.height == 720 {
+                    if optimalFormat == nil {
+                        optimalFormat = format
+                    } else {
+                        let currentMaxFPS = optimalFormat!.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
+                        let newMaxFPS = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
+                        if newMaxFPS > currentMaxFPS {
+                            optimalFormat = format
+                        }
+                    }
+                }
             }
             
             if let format = optimalFormat {
                 camera.activeFormat = format
-                camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 60)
-                camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 60)
-                print("[+] Cámara configurada a 60 FPS.")
+                let maxFPS = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
+                let targetFPS = min(maxFPS, 60.0) // Usar hasta 60 FPS
+                camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
+                camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
+                print("[+] Cámara configurada a \(targetFPS) FPS en resolución 1280x720.")
             } else {
                 camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
                 camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
-                print("[+] Cámara configurada a 30 FPS.")
+                print("[+] Usando formato por defecto a 30 FPS.")
             }
             camera.unlockForConfiguration()
             
@@ -252,7 +266,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         
         // Enviar a codificar
         let flags = VTEncodeInfoFlags()
-        VTCompressionSessionEncodeFrame(
+        let status = VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: imageBuffer,
             presentationTimeStamp: presentationTimeStamp,
@@ -261,6 +275,9 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             sourceFrameRefcon: nil,
             infoFlagsOut: nil
         )
+        if status != noErr {
+            print("[-] Error en VTCompressionSessionEncodeFrame: \(status)")
+        }
     }
     
     

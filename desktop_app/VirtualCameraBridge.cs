@@ -58,7 +58,7 @@ namespace desktop_app
                 _accessor.Write(8, height);                    // height
                 _accessor.Write(12, stride);                   // stride
                 _accessor.Write(16, 0);                        // format (FORMAT_UINT8 = 0)
-                _accessor.Write(20, 0);                        // resizemode (RESIZEMODE_DISABLED = 0)
+                _accessor.Write(20, 1);                        // resizemode (RESIZEMODE_STRETCH = 1)
                 _accessor.Write(24, 0);                        // mirrormode (MIRRORMODE_DISABLED = 0)
                 _accessor.Write(28, 1000);                     // timeout (1000ms)
 

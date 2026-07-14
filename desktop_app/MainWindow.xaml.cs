@@ -133,7 +133,6 @@ namespace desktop_app
             StartTunnelBtn.Content = "Detener Servidor USB";
             StartTunnelBtn.Background = System.Windows.Media.Brushes.Red;
 
-            int localPort = 6000;
             ushort remotePort = 6000;
 
             // 1. Iniciar proceso decodificador FFmpeg por GPU
@@ -148,21 +147,9 @@ namespace desktop_app
                 return;
             }
 
-            // 2. Iniciar el listener TCP local de Windows
-            _tcpListener = new TcpListener(IPAddress.Loopback, localPort);
-            try
-            {
-                _tcpListener.Start();
-                Log($"[*] Servidor de túnel USB iniciado en localhost:{localPort} -> puerto iPhone:{remotePort}");
-                
-                // Iniciar loop de aceptación en segundo plano
-                Task.Run(() => AcceptConnectionsAsync(_tcpListener, _connectedDeviceUdid!, remotePort, _tunnelCts.Token));
-            }
-            catch (Exception ex)
-            {
-                Log($"[-] Error al iniciar servidor local en puerto {localPort}: {ex.Message}");
-                StopTunnel();
-            }
+            // 2. Iniciar la conexión directa al iPhone
+            Log($"[*] Conectando directamente al puerto iPhone:{remotePort}...");
+            Task.Run(() => ConnectAndStreamFromIphoneAsync(_connectedDeviceUdid!, remotePort, _tunnelCts.Token));
         }
 
         private void StopTunnel()
@@ -190,7 +177,7 @@ namespace desktop_app
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
             
             // Argumentos optimizados para baja latencia (lee H.264 de stdin, escribe RGBA en stdout)
-            string args = "-f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -f rawvideo -pix_fmt rgba pipe:1";
+            string args = "-f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -vf scale=1280:720 -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
             {
@@ -200,7 +187,7 @@ namespace desktop_app
                 CreateNoWindow = true,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
-                RedirectStandardError = false
+                RedirectStandardError = true
             };
 
             _ffmpegProcess = Process.Start(startInfo);
@@ -211,8 +198,28 @@ namespace desktop_app
 
             _ffmpegStdin = _ffmpegProcess.StandardInput.BaseStream;
 
+            // Iniciar tarea para leer stderr de FFmpeg
+            Task.Run(() => ReadFFmpegStderrAsync(_ffmpegProcess.StandardError, token));
+
             // Iniciar tarea para leer los frames decodificados RGBA de FFmpeg
             Task.Run(() => ReadDecodedFramesAsync(_ffmpegProcess.StandardOutput.BaseStream, token));
+        }
+
+        private async Task ReadFFmpegStderrAsync(StreamReader stderrReader, CancellationToken token)
+        {
+            try
+            {
+                string? line;
+                while (!token.IsCancellationRequested && (line = await stderrReader.ReadLineAsync(token)) != null)
+                {
+                    string logLine = line;
+                    if (!string.IsNullOrWhiteSpace(logLine))
+                    {
+                        Dispatcher.Invoke(() => Log($"[FFmpeg] {logLine}"));
+                    }
+                }
+            }
+            catch { }
         }
 
         private async Task ReadDecodedFramesAsync(Stream ffmpegStdout, CancellationToken token)
@@ -251,25 +258,9 @@ namespace desktop_app
             }
         }
 
-        private async Task AcceptConnectionsAsync(TcpListener listener, string udid, ushort targetPort, CancellationToken token)
+        private async Task ConnectAndStreamFromIphoneAsync(string udid, ushort targetPort, CancellationToken token)
         {
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    TcpClient localClient = await listener.AcceptTcpClientAsync(token);
-                    _ = Task.Run(() => HandleClientAsync(localClient, udid, targetPort, token));
-                }
-            }
-            catch (Exception)
-            {
-                // Silenciar al detener
-            }
-        }
-
-        private async Task HandleClientAsync(TcpClient localClient, string udid, ushort targetPort, CancellationToken token)
-        {
-            Dispatcher.Invoke(() => Log("[+] Nueva conexión USB establecida. Leyendo stream del iPhone..."));
+            Dispatcher.Invoke(() => Log("[*] Intentando abrir conexión USB con el iPhone..."));
             
             var idevice = LibiMobileDevice.Instance.iDevice;
             iDeviceHandle? deviceHandle = null;
@@ -289,43 +280,78 @@ namespace desktop_app
                     throw new Exception($"No se pudo conectar al puerto {targetPort} del iPhone (Error: {err}). ¿Está la app corriendo en el celular?");
                 }
 
+                Dispatcher.Invoke(() => Log("[+] Conexión USB establecida con éxito. Leyendo stream de video del iPhone..."));
+
                 // Iniciar lectura de bytes desde el USB e inyección en FFmpeg
                 byte[] lengthBuf = new byte[4];
                 byte[] startCode = new byte[] { 0, 0, 0, 1 }; // H.264 Annex B start code
 
                 while (!token.IsCancellationRequested)
                 {
-                    // 1. Leer tamaño del NAL Unit (4 bytes)
+                    // 1. Leer tamaño del paquete enviado por el iPhone (4 bytes)
                     var rErr = ReadExactBytes(deviceConnHandle, lengthBuf, 4, token);
                     if (rErr != iDeviceError.Success) throw new IOException($"Error leyendo cabecera del USB: {rErr}");
 
                     // Convertir big-endian
-                    uint nalLength = (uint)((lengthBuf[0] << 24) | (lengthBuf[1] << 16) | (lengthBuf[2] << 8) | lengthBuf[3]);
-                    if (nalLength == 0) continue;
+                    uint packetLength = (uint)((lengthBuf[0] << 24) | (lengthBuf[1] << 16) | (lengthBuf[2] << 8) | lengthBuf[3]);
+                    if (packetLength == 0) continue;
 
-                    // 2. Leer los bytes del NAL unit
-                    byte[] nalBuffer = new byte[nalLength];
-                    rErr = ReadExactBytes(deviceConnHandle, nalBuffer, (int)nalLength, token);
-                    if (rErr != iDeviceError.Success) throw new IOException($"Error leyendo payload NAL del USB: {rErr}");
+                    // 2. Leer los bytes del paquete
+                    byte[] packetBuffer = new byte[packetLength];
+                    rErr = ReadExactBytes(deviceConnHandle, packetBuffer, (int)packetLength, token);
+                    if (rErr != iDeviceError.Success) throw new IOException($"Error leyendo payload del USB: {rErr}");
 
-                    // 3. Escribir en FFmpeg (Start Code + NAL bytes)
+                    // 3. Procesar y escribir en FFmpeg
                     if (_ffmpegStdin != null && _ffmpegProcess != null && !_ffmpegProcess.HasExited)
                     {
-                        await _ffmpegStdin.WriteAsync(startCode, 0, 4, token);
-                        await _ffmpegStdin.WriteAsync(nalBuffer, 0, (int)nalLength, token);
+                        if (packetLength >= 4)
+                        {
+                            // Leer los primeros 4 bytes del payload como un entero big-endian
+                            uint firstVal = (uint)((packetBuffer[0] << 24) | (packetBuffer[1] << 16) | (packetBuffer[2] << 8) | packetBuffer[3]);
+                            
+                            // Si es un bloque AVCC (el tamaño del primer NAL unit + 4 es menor o igual al tamaño del paquete)
+                            if (firstVal > 0 && firstVal + 4 <= packetLength)
+                            {
+                                int offset = 0;
+                                while (offset + 4 <= packetLength)
+                                {
+                                    uint nalLen = (uint)((packetBuffer[offset] << 24) | (packetBuffer[offset + 1] << 16) | (packetBuffer[offset + 2] << 8) | packetBuffer[offset + 3]);
+                                    if (offset + 4 + nalLen > packetLength)
+                                    {
+                                        break; // Paquete malformado o truncado
+                                    }
+                                    
+                                    // Escribir Start Code (00 00 00 01)
+                                    await _ffmpegStdin.WriteAsync(startCode, 0, 4, token);
+                                    // Escribir el payload del NAL unit
+                                    await _ffmpegStdin.WriteAsync(packetBuffer, offset + 4, (int)nalLen, token);
+                                    
+                                    offset += 4 + (int)nalLen;
+                                }
+                            }
+                            else
+                            {
+                                // Es un NAL unit puro (como SPS/PPS), escribir Start Code + todo el paquete
+                                await _ffmpegStdin.WriteAsync(startCode, 0, 4, token);
+                                await _ffmpegStdin.WriteAsync(packetBuffer, 0, (int)packetLength, token);
+                            }
+                        }
+                        
                         await _ffmpegStdin.FlushAsync(token); // Minimizar buffer para latencia
                     }
                 }
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => Log($"[-] Conexión con iPhone finalizada: {ex.Message}"));
+                Dispatcher.Invoke(() => {
+                    Log($"[-] Conexión con iPhone finalizada: {ex.Message}");
+                    StopTunnel();
+                });
             }
             finally
             {
                 deviceConnHandle?.Dispose();
                 deviceHandle?.Dispose();
-                localClient.Close();
             }
         }
 
