@@ -218,10 +218,10 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             compressedDataAllocator: nil,
             outputCallback: { (outputCallbackRefCon: UnsafeMutableRawPointer?, sourceFrameRefCon: UnsafeMutableRawPointer?, status: OSStatus, infoFlags: VTEncodeInfoFlags, sampleBuffer: CMSampleBuffer?) in
                 guard status == noErr, let sampleBuffer = sampleBuffer else { return }
-                let streamer = Unmanaged<WebcamStreamer>.fromOpaque(outputCallbackRefCon!).takeUnreferencedValue()
+                let streamer = Unmanaged<WebcamStreamer>.fromOpaque(outputCallbackRefCon!).takeUnretainedValue()
                 streamer.sendCompressedFrame(sampleBuffer)
             },
-            refcon: Unmanaged.passUnreferenced(self).toOpaque(),
+            refcon: Unmanaged.passUnretained(self).toOpaque(),
             compressionSessionOut: &compressionSession
         )
         
