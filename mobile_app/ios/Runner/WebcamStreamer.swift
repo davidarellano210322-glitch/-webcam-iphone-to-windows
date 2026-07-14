@@ -216,7 +216,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             encoderSpecification: nil,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
-            outputCallback: { (outputCallbackRefCon, sourceFrameRefCon, status, infoFlags, sampleBuffer) in
+            outputCallback: { (outputCallbackRefCon: UnsafeMutableRawPointer?, sourceFrameRefCon: UnsafeMutableRawPointer?, status: OSStatus, infoFlags: VTEncodeInfoFlags, sampleBuffer: CMSampleBuffer?) in
                 guard status == noErr, let sampleBuffer = sampleBuffer else { return }
                 let streamer = Unmanaged<WebcamStreamer>.fromOpaque(outputCallbackRefCon!).takeUnreferencedValue()
                 streamer.sendCompressedFrame(sampleBuffer)
@@ -323,7 +323,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     // Función auxiliar para saber si es un Keyframe
     private func CFAttachmentsGetKeyframeStatus(_ sampleBuffer: CMSampleBuffer) -> Bool {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [CFDictionary],
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [NSDictionary],
               let attachment = attachments.first as? [String: Any] else {
             return false
         }
