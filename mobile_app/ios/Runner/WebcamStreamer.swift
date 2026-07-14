@@ -283,14 +283,14 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         
         if isKeyframe {
             if let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) {
-                var parameterSetCount = 0
-                CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDescription, index: 0, parameterSetPointer: nil, parameterSetSizePointer: nil, parameterSetCountPointer: &parameterSetCount, nalUnitHeaderLengthPointer: nil)
+                var parameterSetCount: Int = 0
+                CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDescription, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &parameterSetCount, nalUnitHeaderLengthOut: nil)
                 
                 // Enviar SPS (índice 0) y PPS (índice 1) para inicializar el decodificador
                 for i in 0..<parameterSetCount {
-                    var parameterSetPointer: UnsafePointer<UInt8>?
-                    var parameterSetSize = 0
-                    CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDescription, index: i, parameterSetPointer: &parameterSetPointer, parameterSetSizePointer: &parameterSetSize, parameterSetCountPointer: nil, nalUnitHeaderLengthPointer: nil)
+                    var parameterSetPointer: UnsafePointer<UInt8>? = nil
+                    var parameterSetSize: Int = 0
+                    CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDescription, parameterSetIndex: i, parameterSetPointerOut: &parameterSetPointer, parameterSetSizeOut: &parameterSetSize, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
                     
                     if let pointer = parameterSetPointer {
                         let data = Data(bytes: pointer, count: parameterSetSize)
@@ -302,8 +302,8 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         
         // 2. Extraer los datos del video comprimido (unidades NAL H.264)
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-        var totalLength = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
+        var totalLength: Int = 0
+        var dataPointer: UnsafeMutablePointer<Int8>? = nil
         
         let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
         
