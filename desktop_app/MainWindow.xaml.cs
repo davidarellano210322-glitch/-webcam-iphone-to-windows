@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using System.Windows.Media.Imaging;
 using iMobileDevice;
 using iMobileDevice.iDevice;
 
@@ -24,11 +25,18 @@ namespace desktop_app
         private VirtualCameraBridge _virtualCameraBridge = new VirtualCameraBridge();
         private Process? _ffmpegProcess;
         private Stream? _ffmpegStdin;
+        
+        private WriteableBitmap? _previewBitmap;
+        private int _isRenderingPreview = 0;
 
         public MainWindow()
         {
             InitializeComponent();
             InitializeLibiMobileDevice();
+
+            // Inicializar previsualización local
+            _previewBitmap = new WriteableBitmap(1280, 720, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+            VideoPreviewImage.Source = _previewBitmap;
         }
 
         private void InitializeLibiMobileDevice()
@@ -81,7 +89,7 @@ namespace desktop_app
                     {
                         _connectedDeviceUdid = activeUdid;
                         DeviceStatusText.Text = "Conectado";
-                        DeviceStatusText.Foreground = System.Windows.Media.Brushes.Green;
+                        DeviceStatusText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
                         DeviceDetailsText.Text = $"UDID: {activeUdid}\n(Conectado por cable USB)";
                         Log($"[+] iPhone detectado físicamente por USB (UDID: {activeUdid})");
                     }
@@ -92,7 +100,7 @@ namespace desktop_app
                     {
                         _connectedDeviceUdid = null;
                         DeviceStatusText.Text = "Desconectado";
-                        DeviceStatusText.Foreground = System.Windows.Media.Brushes.Red;
+                        DeviceStatusText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
                         DeviceDetailsText.Text = "Enchufa tu iPhone por USB";
                         Log("[-] iPhone desconectado del cable USB.");
                         if (_isTunnelRunning)
@@ -131,7 +139,7 @@ namespace desktop_app
             _isTunnelRunning = true;
             _tunnelCts = new CancellationTokenSource();
             StartTunnelBtn.Content = "Detener Servidor USB";
-            StartTunnelBtn.Background = System.Windows.Media.Brushes.Red;
+            StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
 
             ushort remotePort = 6000;
 
@@ -167,8 +175,27 @@ namespace desktop_app
             }
             _ffmpegStdin = null;
 
-            StartTunnelBtn.Content = "Iniciar Servidor USB";
-            StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#0284c7")!;
+            Dispatcher.Invoke(() =>
+            {
+                if (StartTunnelBtn != null)
+                {
+                    StartTunnelBtn.Content = "Iniciar Servidor USB";
+                    StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4f46e5")!;
+                }
+                if (PlaceholderGrid != null)
+                {
+                    PlaceholderGrid.Visibility = Visibility.Visible;
+                }
+                if (StatusIndicatorDot != null)
+                {
+                    StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
+                }
+                if (StatusBadgeText != null)
+                {
+                    StatusBadgeText.Text = "SIN SEÑAL";
+                }
+            });
+
             Log("[-] Servidor de túnel USB y decodificador detenidos.");
         }
 
@@ -177,7 +204,7 @@ namespace desktop_app
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
             
             // Argumentos optimizados para baja latencia (lee H.264 de stdin, escribe RGBA en stdout)
-            string args = "-f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -vf scale=1280:720 -f rawvideo -pix_fmt rgba pipe:1";
+            string args = "-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -vsync 0 -threads 1 -vf scale=1280:720 -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
             {
@@ -245,6 +272,37 @@ namespace desktop_app
                     {
                         // Escribir el frame en la cámara virtual DirectShow
                         _virtualCameraBridge.WriteFrame(width, height, frameBuffer);
+
+                        // Actualizar previsualización local con throttle y copia segura
+                        if (Interlocked.CompareExchange(ref _isRenderingPreview, 1, 0) == 0)
+                        {
+                            byte[] previewCopy = new byte[frameSize];
+                            for (int i = 0; i < frameSize; i += 4)
+                            {
+                                previewCopy[i] = frameBuffer[i + 2];     // B (desde R)
+                                previewCopy[i + 1] = frameBuffer[i + 1]; // G
+                                previewCopy[i + 2] = frameBuffer[i];     // R (desde B)
+                                previewCopy[i + 3] = frameBuffer[i + 3]; // A
+                            }
+                            
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                try
+                                {
+                                    _previewBitmap?.WritePixels(
+                                        new System.Windows.Int32Rect(0, 0, width, height),
+                                        previewCopy,
+                                        width * 4,
+                                        0
+                                    );
+                                }
+                                catch { }
+                                finally
+                                {
+                                    Interlocked.Exchange(ref _isRenderingPreview, 0);
+                                }
+                            }));
+                        }
                     }
                     else
                     {
@@ -280,7 +338,12 @@ namespace desktop_app
                     throw new Exception($"No se pudo conectar al puerto {targetPort} del iPhone (Error: {err}). ¿Está la app corriendo en el celular?");
                 }
 
-                Dispatcher.Invoke(() => Log("[+] Conexión USB establecida con éxito. Leyendo stream de video del iPhone..."));
+                Dispatcher.Invoke(() => {
+                    Log("[+] Conexión USB establecida con éxito. Leyendo stream de video del iPhone...");
+                    if (PlaceholderGrid != null) PlaceholderGrid.Visibility = Visibility.Collapsed;
+                    if (StatusIndicatorDot != null) StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
+                    if (StatusBadgeText != null) StatusBadgeText.Text = "TRANSMITIENDO";
+                });
 
                 // Iniciar lectura de bytes desde el USB e inyección en FFmpeg
                 byte[] lengthBuf = new byte[4];

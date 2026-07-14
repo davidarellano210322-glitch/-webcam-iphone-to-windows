@@ -246,14 +246,26 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         
         guard let session = compressionSession else { return }
         
-        // Propiedades para baja latencia en tiempo real
+        // Propiedades para baja latencia en tiempo real (Camo-like efficiency)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse) // Desactivar B-frames
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 30 as CFNumber) // I-Frame cada 30 frames
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 60 as CFNumber) // I-Frame cada 60 frames (más eficiente)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber) // Cero delay de frames en el encoder
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 60 as CFNumber) // FPS objetivo
+        
+        // Control de bitrate para evitar congestión del búfer del USB
+        let targetBitrate = 2_500_000 as CFNumber // 2.5 Mbps (excelente calidad a 720p sin retraso)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
+        
+        // Límites de tasa de datos para asegurar el promedio
+        let limitBytes = (2_500_000 / 8) as CFNumber
+        let limitWindow = 1.0 as CFNumber
+        let limits = [limitBytes, limitWindow] as CFArray
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
         
         VTCompressionSessionPrepareToEncodeFrames(session)
-        print("[+] Codificador VideoToolbox H.264 inicializado.")
+        print("[+] Codificador VideoToolbox H.264 optimizado para ultra-baja latencia.")
     }
     
     // Callback de AVCaptureSession: recibe cada frame en bruto de la cámara

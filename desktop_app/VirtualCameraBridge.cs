@@ -45,7 +45,7 @@ namespace desktop_app
         {
             if (!_isInitialized || _accessor == null || _mutex == null || _sentEvent == null) return;
 
-            int stride = width * 4;
+            int stride = width;
             int dataSize = rgbaData.Length;
 
             // Bloquear el mutex para escritura exclusiva
