@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import VideoToolbox
 import Network
+import UIKit
 
 @available(iOS 12.0, *)
 class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -10,18 +11,36 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     private var captureSession: AVCaptureSession?
     private var compressionSession: VTCompressionSession?
+    
+    // Video streaming socket variables (Port 6000)
     private var listener: NWListener?
     private var activeConnection: NWConnection?
+    
+    // Bidirectional control socket variables (Port 6001)
+    private var controlListener: NWListener?
+    private var activeControlConnection: NWConnection?
+    
     private var isStreaming = false
+    private var batteryTimer: Timer?
     
     private let queue = DispatchQueue(label: "com.antigravity.webcam.streamqueue")
     private let socketQueue = DispatchQueue(label: "com.antigravity.webcam.socketqueue")
     
-    // Iniciar el servidor TCP en el puerto 6000
+    // Active camera configuration parameters
+    private var currentPosition: AVCaptureDevice.Position = .back
+    private var currentLensType: AVCaptureDevice.DeviceType = .builtInWideAngleCamera
+    private var currentResolution: String = "720p"
+    private var currentFPS: Double = 30.0
+    
+    // Iniciar servidores TCP
     func startServer() {
+        // 1. Iniciar socket de video en puerto 6000
         do {
             let port = NWEndpoint.Port(rawValue: 6000)!
             let parameters = NWParameters.tcp
+            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true // Evitar Nagle's algorithm para video en tiempo real
+            }
             listener = try NWListener(using: parameters, on: port)
             
             listener?.stateUpdateHandler = { state in
@@ -41,49 +60,323 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             
             listener?.start(queue: socketQueue)
         } catch {
-            print("[-] Error al crear NWListener: \(error)")
+            print("[-] Error al crear NWListener de video: \(error)")
         }
+        
+        // 2. Iniciar socket de control en puerto 6001
+        startControlServer()
     }
     
     func stopServer() {
         stopStreaming()
+        
         listener?.cancel()
         listener = nil
+        
+        controlListener?.cancel()
+        controlListener = nil
+        
+        activeControlConnection?.cancel()
+        activeControlConnection = nil
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.batteryTimer?.invalidate()
+            self?.batteryTimer = nil
+        }
     }
-
+    
     func switchCamera() {
-        queue.async { [weak self] in
-            guard let self = self, let session = self.captureSession else { return }
+        let newPosition: AVCaptureDevice.Position = (currentPosition == .back) ? .front : .back
+        updateCameraConfiguration(position: newPosition, lensType: .builtInWideAngleCamera, resolution: nil, fps: nil)
+    }
+    
+    // Configurar canal de control bidireccional (Puerto 6001)
+    private func startControlServer() {
+        do {
+            let port = NWEndpoint.Port(rawValue: 6001)!
+            let parameters = NWParameters.tcp
+            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true // Latencia ultra-baja para comandos de control
+            }
+            controlListener = try NWListener(using: parameters, on: port)
             
-            session.beginConfiguration()
-            defer { session.commitConfiguration() }
+            controlListener?.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    print("[+] Servidor de Control listo y escuchando en puerto 6001")
+                case .failed(let error):
+                    print("[-] Error en el servidor de control: \(error)")
+                default:
+                    break
+                }
+            }
             
-            guard let currentInput = session.inputs.first as? AVCaptureDeviceInput else { return }
-            session.removeInput(currentInput)
+            controlListener?.newConnectionHandler = { [weak self] connection in
+                self?.handleNewControlConnection(connection)
+            }
             
-            let newPosition: AVCaptureDevice.Position = (currentInput.device.position == .back) ? .front : .back
+            controlListener?.start(queue: socketQueue)
+        } catch {
+            print("[-] Error al crear control NWListener: \(error)")
+        }
+    }
+    
+    private func handleNewControlConnection(_ connection: NWConnection) {
+        socketQueue.async { [weak self] in
+            guard let self = self else { return }
             
-            guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
-                print("[-] No se pudo acceder a la cámara seleccionada (\(newPosition))")
-                session.addInput(currentInput)
+            if self.activeControlConnection != nil {
+                print("[*] Canal de control ya está activo. Rechazando nueva conexion.")
+                connection.cancel()
                 return
             }
             
-            do {
-                let input = try AVCaptureDeviceInput(device: camera)
-                if session.canAddInput(input) {
-                    session.addInput(input)
-                    print("[+] Cambiado a cámara: \(newPosition == .back ? "Trasera" : "Frontal")")
-                } else {
-                    session.addInput(currentInput)
+            print("[+] Canal de Control establecido con Windows.")
+            self.activeControlConnection = connection
+            
+            connection.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .failed, .cancelled:
+                    print("[-] Canal de Control cerrado.")
+                    self?.activeControlConnection = nil
+                default:
+                    break
                 }
-            } catch {
-                print("[-] Error al cambiar de cámara: \(error)")
-                session.addInput(currentInput)
+            }
+            
+            self.listenForControlMessages(connection)
+            connection.start(queue: self.socketQueue)
+            
+            // Enviar datos del dispositivo iniciales
+            self.sendDeviceInfo()
+            
+            // Iniciar timer de batería periódico
+            DispatchQueue.main.async {
+                self.batteryTimer?.invalidate()
+                self.batteryTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { _ in
+                    self.socketQueue.async {
+                        self.sendDeviceInfo()
+                    }
+                }
             }
         }
     }
-
+    
+    private func listenForControlMessages(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, context, isComplete, error in
+            guard let self = self, error == nil, let data = content else {
+                connection.cancel()
+                return
+            }
+            
+            // Procesar el mensaje recibido
+            self.processControlMessage(data)
+            
+            if !isComplete {
+                self.listenForControlMessages(connection)
+            }
+        }
+    }
+    
+    private func processControlMessage(_ data: Data) {
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+               let cmd = json["cmd"] as? String {
+                
+                print("[*] Comando de control recibido: \(cmd)")
+                switch cmd {
+                case "setCamera":
+                    if let val = json["val"] as? String {
+                        var lens: AVCaptureDevice.DeviceType = .builtInWideAngleCamera
+                        var position: AVCaptureDevice.Position = .back
+                        
+                        if val == "front" {
+                            position = .front
+                        } else {
+                            position = .back
+                            if val == "telephoto" {
+                                lens = .builtInTelephotoCamera
+                            } else if val == "ultrawide" {
+                                lens = .builtInUltraWideCamera
+                            }
+                        }
+                        self.updateCameraConfiguration(position: position, lensType: lens, resolution: nil, fps: nil)
+                    }
+                    
+                case "setFocus":
+                    if let mode = json["mode"] as? String,
+                       let val = json["val"] as? Double {
+                        self.setFocus(mode: mode, position: Float(val))
+                    }
+                    
+                case "setTorch":
+                    if let val = json["val"] as? Bool {
+                        self.setTorch(on: val)
+                    }
+                    
+                case "setBrightness":
+                    if let val = json["val"] as? Double {
+                        self.setExposure(bias: Float(val))
+                    }
+                    
+                case "setResolution":
+                    if let val = json["val"] as? String,
+                       let fps = json["fps"] as? Double {
+                        self.updateCameraConfiguration(position: nil, lensType: nil, resolution: val, fps: fps)
+                    }
+                    
+                default:
+                    break
+                }
+            }
+        } catch {
+            print("[-] Error parseando mensaje de control: \(error)")
+        }
+    }
+    
+    // Enviar estado de batería y detalles del iPhone al canal de control en Windows
+    func sendDeviceInfo() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            let batteryLevel = Int(UIDevice.current.batteryLevel * 100)
+            let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
+            let deviceName = UIDevice.current.name
+            let sysVersion = UIDevice.current.systemVersion
+            
+            self.socketQueue.async {
+                let info: [String: Any] = [
+                    "event": "deviceInfo",
+                    "batteryLevel": batteryLevel,
+                    "isCharging": isCharging,
+                    "deviceName": deviceName,
+                    "systemVersion": sysVersion,
+                    "lens": self.currentLensType == .builtInTelephotoCamera ? "telephoto" :
+                            self.currentLensType == .builtInUltraWideCamera ? "ultrawide" :
+                            self.currentPosition == .front ? "front" : "wide",
+                    "resolution": self.currentResolution,
+                    "fps": self.currentFPS
+                ]
+                
+                if let data = try? JSONSerialization.data(withJSONObject: info, options: []),
+                   let conn = self.activeControlConnection {
+                    var length = UInt32(data.count).bigEndian
+                    let header = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
+                    let packet = header + data
+                    conn.send(content: packet, completion: .contentProcessed({ _ in }))
+                }
+            }
+        }
+    }
+    
+    // Métodos para cambiar la configuración del sensor dinámicamente
+    private func getActiveCamera() -> AVCaptureDevice? {
+        guard let input = captureSession?.inputs.first as? AVCaptureDeviceInput else { return nil }
+        return input.device
+    }
+    
+    func setTorch(on: Bool) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            guard camera.hasTorch else { return }
+            do {
+                try camera.lockForConfiguration()
+                camera.torchMode = on ? .on : .off
+                camera.unlockForConfiguration()
+                print("[+] Linterna configurada a: \(on ? "Encendido" : "Apagado")")
+            } catch {
+                print("[-] Error configurando linterna: \(error)")
+            }
+        }
+    }
+    
+    func setFocus(mode: String, position: Float) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                if mode == "auto" {
+                    if camera.isFocusModeSupported(.continuousAutoFocus) {
+                        camera.focusMode = .continuousAutoFocus
+                        print("[+] Enfoque automático continuo activo.")
+                    }
+                } else {
+                    if camera.isFocusModeSupported(.locked) {
+                        camera.focusMode = .locked
+                        camera.setFocusModeLocked(lensPosition: position, completionHandler: nil)
+                        print("[+] Enfoque manual bloqueado en posición: \(position)")
+                    }
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("[-] Error configurando enfoque: \(error)")
+            }
+        }
+    }
+    
+    func setExposure(bias: Float) {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            do {
+                try camera.lockForConfiguration()
+                let clampedBias = max(camera.minExposureTargetBias, min(camera.maxExposureTargetBias, bias))
+                camera.setExposureTargetBias(clampedBias, completionHandler: nil)
+                camera.unlockForConfiguration()
+                print("[+] Brillo de exposición configurado a: \(clampedBias)")
+            } catch {
+                print("[-] Error configurando exposición: \(error)")
+            }
+        }
+    }
+    
+    // Cambiar la resolución, cámara física o framerate
+    func updateCameraConfiguration(position: AVCaptureDevice.Position?, lensType: AVCaptureDevice.DeviceType?, resolution: String?, fps: Double?) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            
+            var changed = false
+            if let pos = position, pos != self.currentPosition {
+                self.currentPosition = pos
+                changed = true
+            }
+            if let lens = lensType, lens != self.currentLensType {
+                self.currentLensType = lens
+                changed = true
+            }
+            if let res = resolution, res != self.currentResolution {
+                self.currentResolution = res
+                changed = true
+            }
+            if let f = fps, f != self.currentFPS {
+                self.currentFPS = f
+                changed = true
+            }
+            
+            if changed {
+                print("[*] Aplicando cambios de cámara: Posición=\(self.currentPosition.rawValue), Lente=\(self.currentLensType.rawValue), Resolución=\(self.currentResolution), FPS=\(self.currentFPS)")
+                
+                if self.isStreaming {
+                    // Detener streaming temporalmente
+                    self.captureSession?.stopRunning()
+                    self.captureSession = nil
+                    
+                    if let session = self.compressionSession {
+                        VTCompressionSessionInvalidate(session)
+                        self.compressionSession = nil
+                    }
+                    
+                    // Reconfigurar con nuevos parámetros
+                    self.setupCaptureSession()
+                    self.setupCompressionSession()
+                    
+                    self.captureSession?.startRunning()
+                    
+                    // Notificar cambios de vuelta a Windows
+                    self.sendDeviceInfo()
+                }
+            }
+        }
+    }
     
     private func handleNewConnection(_ connection: NWConnection) {
         socketQueue.async { [weak self] in
@@ -114,7 +407,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
     
-    // Iniciar la cámara y la compresión
     private func startStreaming() {
         queue.async { [weak self] in
             guard let self = self else { return }
@@ -150,13 +442,32 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
     
-    // Configurar AVCaptureSession para obtener frames en bruto de la cámara trasera
     private func setupCaptureSession() {
         let session = AVCaptureSession()
-        session.sessionPreset = .hd1280x720 // Resolución por defecto
         
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
-            print("[-] No se pudo acceder a la cámara trasera.")
+        // Ajustar preset según resolución configurada
+        var width: Int32 = 1280
+        var height: Int32 = 720
+        
+        if currentResolution == "1080p" {
+            session.sessionPreset = .hd1920x1080
+            width = 1920
+            height = 1080
+        } else {
+            session.sessionPreset = .hd1280x720
+            width = 1280
+            height = 720
+        }
+        
+        // Encontrar dispositivo de cámara
+        guard var camera = AVCaptureDevice.default(currentLensType, for: .video, position: currentPosition) else {
+            print("[-] Lente \(currentLensType.rawValue) no compatible. Usando lente por defecto.")
+            guard let fallbackCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: currentPosition) else {
+                print("[-] No se pudo acceder a ninguna cámara.")
+                return
+            }
+            camera = fallbackCamera
+            self.currentLensType = .builtInWideAngleCamera
             return
         }
         
@@ -166,7 +477,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 session.addInput(input)
             }
             
-            // Configurar salida de datos
             let output = AVCaptureVideoDataOutput()
             output.alwaysDiscardsLateVideoFrames = true
             output.videoSettings = [
@@ -178,13 +488,13 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 session.addOutput(output)
             }
             
-            // Ajustar FPS de la cámara a 60 FPS si es compatible en 1280x720, si no a 30 FPS
+            // Configurar FPS
             try camera.lockForConfiguration()
             
             var optimalFormat: AVCaptureDevice.Format? = nil
             for format in camera.formats {
                 let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                if dimensions.width == 1280 && dimensions.height == 720 {
+                if dimensions.width == width && dimensions.height == height {
                     if optimalFormat == nil {
                         optimalFormat = format
                     } else {
@@ -200,27 +510,31 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             if let format = optimalFormat {
                 camera.activeFormat = format
                 let maxFPS = format.videoSupportedFrameRateRanges.first?.maxFrameRate ?? 30.0
-                let targetFPS = min(maxFPS, 60.0) // Usar hasta 60 FPS
+                let targetFPS = min(maxFPS, currentFPS)
                 camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
                 camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(targetFPS))
-                print("[+] Cámara configurada a \(targetFPS) FPS en resolución 1280x720.")
+                print("[+] Cámara configurada a \(targetFPS) FPS en resolución \(width)x\(height).")
             } else {
-                camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
-                camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
-                print("[+] Usando formato por defecto a 30 FPS.")
+                camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(currentFPS))
+                camera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(currentFPS))
             }
-            camera.unlockForConfiguration()
             
+            // Desactivar autofocus continuo si configuramos foco manual previamente
+            camera.unlockForConfiguration()
             self.captureSession = session
         } catch {
             print("[-] Error al configurar cámara: \(error)")
         }
     }
     
-    // Configurar el codificador de hardware H.264 (VideoToolbox)
     private func setupCompressionSession() {
-        let width: Int32 = 1280
-        let height: Int32 = 720
+        var width: Int32 = 1280
+        var height: Int32 = 720
+        
+        if currentResolution == "1080p" {
+            width = 1920
+            height = 1080
+        }
         
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
@@ -246,29 +560,26 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         
         guard let session = compressionSession else { return }
         
-        // Propiedades para baja latencia en tiempo real (Camo-like efficiency)
+        // Propiedades de compresión para ultra-baja latencia
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse) // Desactivar B-frames
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 60 as CFNumber) // I-Frame cada 60 frames (más eficiente)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber) // Cero delay de frames en el encoder
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 60 as CFNumber) // FPS objetivo
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 60 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: currentFPS as CFNumber)
         
-        // Control de bitrate para evitar congestión del búfer del USB
-        let targetBitrate = 2_500_000 as CFNumber // 2.5 Mbps (excelente calidad a 720p sin retraso)
+        let targetBitrate = (currentResolution == "1080p" ? 4_500_000 : 2_500_000) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
-        // Límites de tasa de datos para asegurar el promedio
-        let limitBytes = (2_500_000 / 8) as CFNumber
+        let limitBytes = ((currentResolution == "1080p" ? 4_500_000 : 2_500_000) / 8) as CFNumber
         let limitWindow = 1.0 as CFNumber
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
         
         VTCompressionSessionPrepareToEncodeFrames(session)
-        print("[+] Codificador VideoToolbox H.264 optimizado para ultra-baja latencia.")
+        print("[+] Codificador VideoToolbox optimizado para \(currentResolution) a \(currentFPS) FPS.")
     }
     
-    // Callback de AVCaptureSession: recibe cada frame en bruto de la cámara
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer), isStreaming else { return }
         guard let session = compressionSession else { return }
@@ -276,8 +587,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         let presentationTimeStamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let duration = CMSampleBufferGetDuration(sampleBuffer)
         
-        // Enviar a codificar
-        let flags = VTEncodeInfoFlags()
         let status = VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: imageBuffer,
@@ -292,12 +601,9 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
     
-    
-    // Enviar el frame H.264 codificado por el socket TCP
     private func sendCompressedFrame(_ sampleBuffer: CMSampleBuffer) {
         guard let connection = activeConnection else { return }
         
-        // 1. Verificar si el frame es un Keyframe (I-frame) y extraer SPS/PPS si es necesario
         let isKeyframe = !CFAttachmentsGetKeyframeStatus(sampleBuffer)
         
         if isKeyframe {
@@ -305,7 +611,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
                 var parameterSetCount: Int = 0
                 CMVideoFormatDescriptionGetH264ParameterSetAtIndex(formatDescription, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &parameterSetCount, nalUnitHeaderLengthOut: nil)
                 
-                // Enviar SPS (índice 0) y PPS (índice 1) para inicializar el decodificador
                 for i in 0..<parameterSetCount {
                     var parameterSetPointer: UnsafePointer<UInt8>? = nil
                     var parameterSetSize: Int = 0
@@ -319,7 +624,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             }
         }
         
-        // 2. Extraer los datos del video comprimido (unidades NAL H.264)
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
         var totalLength: Int = 0
         var dataPointer: UnsafeMutablePointer<Int8>? = nil
@@ -327,20 +631,16 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
         
         if status == noErr, let pointer = dataPointer {
-            // El buffer de VideoToolbox viene en formato AVCC (longitud de 4 bytes + bytes del NAL)
-            // Mandamos los bytes directo al túnel USB
             let data = Data(bytes: pointer, count: totalLength)
             sendPacket(data)
         }
     }
     
-    // Enmarcar y enviar los bytes por socket: [Tamaño (4 bytes)][Bytes del H.264 NAL]
     private func sendPacket(_ data: Data) {
         guard let connection = activeConnection else { return }
         
         var length = UInt32(data.count).bigEndian
         let header = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
-        
         let packet = header + data
         
         connection.send(content: packet, completion: .contentProcessed({ error in
@@ -350,7 +650,6 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }))
     }
     
-    // Función auxiliar para saber si es un Keyframe
     private func CFAttachmentsGetKeyframeStatus(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [NSDictionary],
               let attachment = attachments.first as? [String: Any] else {
