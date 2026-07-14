@@ -460,14 +460,15 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
         
         // Encontrar dispositivo de cámara
-        guard var camera = AVCaptureDevice.default(currentLensType, for: .video, position: currentPosition) else {
+        var selectedCamera: AVCaptureDevice? = AVCaptureDevice.default(currentLensType, for: .video, position: currentPosition)
+        if selectedCamera == nil {
             print("[-] Lente \(currentLensType.rawValue) no compatible. Usando lente por defecto.")
-            guard let fallbackCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: currentPosition) else {
-                print("[-] No se pudo acceder a ninguna cámara.")
-                return
-            }
-            camera = fallbackCamera
+            selectedCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: currentPosition)
             self.currentLensType = .builtInWideAngleCamera
+        }
+        
+        guard let camera = selectedCamera else {
+            print("[-] No se pudo acceder a ninguna cámara.")
             return
         }
         
@@ -564,15 +565,15 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 60 as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: currentFPS as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: (60 as NSNumber) as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         
-        let targetBitrate = (currentResolution == "1080p" ? 4_500_000 : 2_500_000) as CFNumber
+        let targetBitrate = ((currentResolution == "1080p" ? 4_500_000 : 2_500_000) as NSNumber) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
-        let limitBytes = ((currentResolution == "1080p" ? 4_500_000 : 2_500_000) / 8) as CFNumber
-        let limitWindow = 1.0 as CFNumber
+        let limitBytes = (((currentResolution == "1080p" ? 4_500_000 : 2_500_000) / 8) as NSNumber) as CFNumber
+        let limitWindow = (1.0 as NSNumber) as CFNumber
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
         
