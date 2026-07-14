@@ -29,9 +29,7 @@ namespace desktop_app
         private VirtualCameraBridge _virtualCameraBridge = new VirtualCameraBridge();
         private Process? _ffmpegProcess;
         
-        // Video loopback TCP connection (Port 6002)
-        private TcpClient? _ffmpegClient;
-        private Stream? _ffmpegStream;
+
         
         // Dynamic control USB connection (Port 6001)
         private iDeviceConnectionHandle? _activeControlConn;
@@ -248,13 +246,7 @@ namespace desktop_app
                 _ffmpegProcess = null;
             }
 
-            // Close local loopback socket to FFmpeg
-            if (_ffmpegClient != null)
-            {
-                try { _ffmpegClient.Close(); } catch { }
-                _ffmpegClient = null;
-            }
-            _ffmpegStream = null;
+
 
             // Clear control handle
             _activeControlConn = null;
@@ -330,8 +322,8 @@ namespace desktop_app
             }
             catch { }
             
-            // Reemplazo de stdin: Escuchamos en socket local TCP puerto 6002
-            string args = $"-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i tcp://127.0.0.1:6002?listen -vsync 0 -threads 1 -vf scale={width}:{height} -f rawvideo -pix_fmt rgba pipe:1";
+            // Recibe mediante stdin (pipe:0)
+            string args = $"-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -vsync 0 -threads 1 -vf scale={width}:{height} -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
             {
@@ -339,7 +331,7 @@ namespace desktop_app
                 Arguments = args,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardInput = false, // Recibe mediante TCP local
+                RedirectStandardInput = true, // Recibe mediante StandardInput
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
@@ -349,23 +341,6 @@ namespace desktop_app
             {
                 throw new Exception("No se pudo arrancar ffmpeg.exe. Verifica que esté en tu PATH.");
             }
-
-            // Establecer el socket de loopback en un hilo separado
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(150); // Tiempo para que FFmpeg levante la escucha local
-                try
-                {
-                    _ffmpegClient = new TcpClient();
-                    await _ffmpegClient.ConnectAsync("127.0.0.1", 6002);
-                    _ffmpegStream = _ffmpegClient.GetStream();
-                    Log("[+] Loopback de video conectado con éxito a FFmpeg.");
-                }
-                catch (Exception ex)
-                {
-                    Log($"[-] Error en loopback TCP local: {ex.Message}");
-                }
-            }, token);
 
             // Leer stderr
             _ = Task.Run(() => ReadFFmpegStderrAsync(_ffmpegProcess.StandardError, token));
@@ -518,8 +493,8 @@ namespace desktop_app
                     rErr = ReadExactBytes(deviceConnHandle, packetBuffer, (int)packetLength, token);
                     if (rErr != iDeviceError.Success) throw new IOException($"Error de lectura en payload USB: {rErr}");
 
-                    var stream = _ffmpegStream;
-                    if (stream != null && _ffmpegProcess != null && !_ffmpegProcess.HasExited)
+                    var stream = _ffmpegProcess?.StandardInput.BaseStream;
+                    if (stream != null && !_ffmpegProcess.HasExited)
                     {
                         if (packetLength >= 4)
                         {
