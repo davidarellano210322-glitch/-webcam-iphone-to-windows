@@ -9,9 +9,9 @@ import UIKit
   ) -> Bool {
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     
-    if let controller = window?.rootViewController as? FlutterViewController {
+    if let engine = self.flutterEngine {
       let controlChannel = FlutterMethodChannel(name: "com.antigravity.webcam/control",
-                                                binaryMessenger: controller.binaryMessenger)
+                                                binaryMessenger: engine.binaryMessenger)
       
       controlChannel.setMethodCallHandler({
         (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
