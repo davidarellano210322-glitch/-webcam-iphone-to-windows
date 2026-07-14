@@ -263,7 +263,7 @@
                     <TextBlock x:Name="StatusBadgeText" Text="SIN SEÑAL" FontSize="11" FontWeight="Bold" Foreground="#ef4444" VerticalAlignment="Center" Margin="0,0,15,0"/>
                     
                     <Button x:Name="StartTunnelBtn" Content="Iniciar Servidor USB" Background="#e11d48" BorderThickness="0" 
-                            Foreground="White" FontSize="11" FontWeight="Bold" Padding="12,6" Click="StartTunnelBtn_Click">
+                            Foreground="White" FontSize="11" FontWeight="Bold" Padding="12,6" Click="StartTunnelBtn_Click" Visibility="Collapsed">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="6"/>
@@ -346,12 +346,13 @@
                                         <ColumnDefinition Width="80"/>
                                     </Grid.ColumnDefinitions>
                                     <ComboBox x:Name="ResolutionComboBox" Grid.Column="0" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="8,6" Margin="0,0,8,0" SelectionChanged="ResolutionComboBox_SelectionChanged">
-                                        <ComboBoxItem Content="720p 16:9 (HD)" Tag="720p" IsSelected="True"/>
-                                        <ComboBoxItem Content="1080p 16:9 (FHD)" Tag="1080p"/>
+                                        <ComboBoxItem Content="720p 16:9 (HD)" Tag="720p"/>
+                                        <ComboBoxItem Content="1080p 16:9 (FHD)" Tag="1080p" IsSelected="True"/>
+                                        <ComboBoxItem Content="4K Ultra HD (2160p)" Tag="4k"/>
                                     </ComboBox>
                                     <ComboBox x:Name="FpsComboBox" Grid.Column="1" Background="#161b26" Foreground="#f8fafc" BorderBrush="#2e3547" Padding="8,6" SelectionChanged="ResolutionComboBox_SelectionChanged">
-                                        <ComboBoxItem Content="30 FPS" Tag="30" IsSelected="True"/>
-                                        <ComboBoxItem Content="60 FPS" Tag="60"/>
+                                        <ComboBoxItem Content="30 FPS" Tag="30"/>
+                                        <ComboBoxItem Content="60 FPS" Tag="60" IsSelected="True"/>
                                     </ComboBox>
                                 </Grid>
                             </StackPanel>
@@ -388,12 +389,11 @@
                     </StackPanel>
                 </ScrollViewer>
             </Border>
-
             <!-- Column 1: Main Stream Feed & Terminal Logs -->
             <Grid Grid.Column="1" Background="#02050b">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="160"/> <!-- Terminal logs at the bottom -->
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <!-- Live Feed Frame -->
@@ -429,7 +429,7 @@
                 </Border>
 
                 <!-- Diagnostic Terminal Console logs -->
-                <Border Grid.Row="1" Background="#070a12" BorderThickness="0,1,0,0" BorderBrush="#1e293b" Padding="12">
+                <Border x:Name="LogBorder" Grid.Row="1" Background="#070a12" BorderThickness="0,1,0,0" BorderBrush="#1e293b" Padding="12" Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -438,7 +438,7 @@
                         <TextBlock Grid.Row="0" Text="CONSOLE DIAGNOSTICS LOG" FontSize="10" FontWeight="Bold" Foreground="#64748b" Margin="0,0,0,5"/>
                         <TextBox Grid.Row="1" x:Name="LogTextBox" Background="Transparent" Foreground="#f43f5e" BorderThickness="0" 
                                  FontFamily="Consolas" FontSize="10" IsReadOnly="True" VerticalScrollBarVisibility="Auto" 
-                                 TextWrapping="Wrap" CaretBrush="#e11d48"/>
+                                 TextWrapping="Wrap" CaretBrush="#e11d48" Height="120"/>
                     </Grid>
                 </Border>
             </Grid>
@@ -556,14 +556,15 @@
                 </ScrollViewer>
             </Border>
         </Grid>
-
         <!-- Footer Bar -->
         <Border Grid.Row="2" Background="#0b0f19" BorderThickness="0,1,0,0" BorderBrush="#1e293b" Padding="15,0">
             <Grid>
                 <TextBlock Text="Antigravity Camo Receiver v2.0 • Ultra-Low Latency USB Tunneling Active" 
                            FontSize="10" Foreground="#475569" VerticalAlignment="Center"/>
-                <TextBlock Text="DirectShow Virtual Camera Ready" FontSize="10" Foreground="#475569" 
-                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <CheckBox x:Name="ShowLogsCheckBox" Content="Ver Logs Diagnósticos" Foreground="#475569" FontSize="10" VerticalAlignment="Center" Margin="0,0,15,0" Checked="ShowLogsCheckBox_Changed" Unchecked="ShowLogsCheckBox_Changed"/>
+                    <TextBlock Text="DirectShow Virtual Camera Ready" FontSize="10" Foreground="#475569" VerticalAlignment="Center"/>
+                </StackPanel>
             </Grid>
         </Border>
     </Grid>

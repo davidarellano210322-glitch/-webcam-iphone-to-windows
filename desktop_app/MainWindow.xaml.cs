@@ -45,16 +45,18 @@ namespace desktop_app
         private bool _isRecording = false;
         private Process? _ffmpegRecorderProcess;
         private Stream? _ffmpegRecorderStdin;
-        private int _recordWidth = 1280;
-        private int _recordHeight = 720;
+        private int _recordWidth = 1920;
+        private int _recordHeight = 1080;
+        private int _activeWidth = 1920;
+        private int _activeHeight = 1080;
 
         public MainWindow()
         {
             InitializeComponent();
             InitializeLibiMobileDevice();
 
-            // Local video preview bitmap init
-            _previewBitmap = new WriteableBitmap(1280, 720, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+            // Local video preview bitmap init (1080p FHD by default)
+            _previewBitmap = new WriteableBitmap(1920, 1080, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
             VideoPreviewImage.Source = _previewBitmap;
         }
 
@@ -119,6 +121,12 @@ namespace desktop_app
                         {
                             firstItem.Content = $"iPhone ({activeUdid.Substring(0, 8)})";
                         }
+                    }
+
+                    // Auto-start tunnel if not currently running
+                    if (!_isTunnelRunning)
+                    {
+                        StartTunnel();
                     }
                 }
                 else
@@ -256,6 +264,32 @@ namespace desktop_app
         {
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
 
+            int width = 1920;
+            int height = 1080;
+
+            if (ResolutionComboBox != null && ResolutionComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag)
+            {
+                string tagLower = tag.ToLowerInvariant();
+                if (tagLower == "720p")
+                {
+                    width = 1280;
+                    height = 720;
+                }
+                else if (tagLower == "1080p")
+                {
+                    width = 1920;
+                    height = 1080;
+                }
+                else if (tagLower == "4k")
+                {
+                    width = 3840;
+                    height = 2160;
+                }
+            }
+
+            _activeWidth = width;
+            _activeHeight = height;
+
             // Clean up any existing zombie ffmpeg processes first to free up port 6002
             try
             {
@@ -267,7 +301,7 @@ namespace desktop_app
             catch { }
             
             // Reemplazo de stdin: Escuchamos en socket local TCP puerto 6002
-            string args = "-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i tcp://127.0.0.1:6002?listen -vsync 0 -threads 1 -vf scale=1280:720 -f rawvideo -pix_fmt rgba pipe:1";
+            string args = $"-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i tcp://127.0.0.1:6002?listen -vsync 0 -threads 1 -vf scale={width}:{height} -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
             {
@@ -329,8 +363,8 @@ namespace desktop_app
 
         private async Task ReadDecodedFramesAsync(Stream ffmpegStdout, CancellationToken token)
         {
-            int width = 1280;
-            int height = 720;
+            int width = _activeWidth;
+            int height = _activeHeight;
             int frameSize = width * height * 4;
             byte[] frameBuffer = new byte[frameSize];
 
@@ -684,15 +718,26 @@ namespace desktop_app
 
         private async void ResolutionComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
-            if (_isUpdatingUi || ResolutionComboBox == null || FpsComboBox == null || _activeControlConn == null) return;
+            if (_isUpdatingUi || ResolutionComboBox == null || FpsComboBox == null) return;
 
             if (ResolutionComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem resItem && resItem.Tag is string res &&
                 FpsComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem fpsItem && fpsItem.Tag is string fpsStr)
             {
                 if (double.TryParse(fpsStr, out double fps))
                 {
-                    string cmd = $"{{\"cmd\":\"setResolution\",\"val\":\"{res}\",\"fps\":{fps}}}";
-                    await SendControlCommandAsync(cmd);
+                    if (_activeControlConn != null)
+                    {
+                        string cmd = $"{{\"cmd\":\"setResolution\",\"val\":\"{res}\",\"fps\":{fps}}}";
+                        await SendControlCommandAsync(cmd);
+                    }
+
+                    if (_isTunnelRunning)
+                    {
+                        Log("[*] Reiniciando conexión de video para aplicar nueva resolución...");
+                        StopTunnel();
+                        await Task.Delay(400);
+                        StartTunnel();
+                    }
                 }
             }
         }
@@ -1108,6 +1153,12 @@ namespace desktop_app
                 }
             }
             return iDeviceError.Success;
+        }
+
+        private void ShowLogsCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (LogBorder == null) return;
+            LogBorder.Visibility = ShowLogsCheckBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         }
 
         protected override void OnClosed(EventArgs e)

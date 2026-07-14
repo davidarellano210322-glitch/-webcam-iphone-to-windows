@@ -22,6 +22,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     private var isStreaming = false
     private var batteryTimer: Timer?
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     
     private let queue = DispatchQueue(label: "com.antigravity.webcam.streamqueue")
     private let socketQueue = DispatchQueue(label: "com.antigravity.webcam.socketqueue")
@@ -528,6 +529,17 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             if self.isStreaming { return }
             
             print("[*] Iniciando captura de cámara nativa y codificador VideoToolbox...")
+            
+            // Prevent device screen from dimming/sleeping
+            DispatchQueue.main.async {
+                UIApplication.shared.isIdleTimerDisabled = true
+            }
+            
+            // Begin background task to keep socket connection alive if app is backgrounded
+            self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WebcamStreamerBackground") { [weak self] in
+                self?.stopStreaming()
+            }
+            
             self.setupCaptureSession()
             self.setupCompressionSession()
             
@@ -543,6 +555,17 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             
             print("[*] Deteniendo captura y codificador...")
             self.isStreaming = false
+            
+            // Restore default idle timer behavior
+            DispatchQueue.main.async {
+                UIApplication.shared.isIdleTimerDisabled = false
+            }
+            
+            // End background task
+            if self.backgroundTaskID != .invalid {
+                UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
+                self.backgroundTaskID = .invalid
+            }
             
             self.captureSession?.stopRunning()
             self.captureSession = nil
@@ -564,7 +587,11 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         var width: Int32 = 1280
         var height: Int32 = 720
         
-        if currentResolution == "1080p" {
+        if currentResolution.lowercased() == "4k" {
+            session.sessionPreset = .hd3840x2160
+            width = 3840
+            height = 2160
+        } else if currentResolution == "1080p" {
             session.sessionPreset = .hd1920x1080
             width = 1920
             height = 1080
@@ -647,7 +674,10 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         var width: Int32 = 1280
         var height: Int32 = 720
         
-        if currentResolution == "1080p" {
+        if currentResolution.lowercased() == "4k" {
+            width = 3840
+            height = 2160
+        } else if currentResolution == "1080p" {
             width = 1920
             height = 1080
         }
@@ -684,10 +714,11 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         
-        let targetBitrate = ((currentResolution == "1080p" ? 4_500_000 : 2_500_000) as NSNumber) as CFNumber
+        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 12_000_000 : (currentResolution == "1080p" ? 4_500_000 : 2_500_000)
+        let targetBitrate = (rawBitrate as NSNumber) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
-        let limitBytes = (((currentResolution == "1080p" ? 4_500_000 : 2_500_000) / 8) as NSNumber) as CFNumber
+        let limitBytes = ((rawBitrate / 8) as NSNumber) as CFNumber
         let limitWindow = (1.0 as NSNumber) as CFNumber
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
