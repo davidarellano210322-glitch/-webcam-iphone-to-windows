@@ -553,6 +553,33 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             
             self.captureSession?.startRunning()
             self.isStreaming = true
+            
+            // Notificar a Windows que la cámara ya está lista
+            self.sendReadySignal()
+        }
+    }
+    
+    // Enviar señal "ready" cuando la cámara y el compresor están listos
+    private func sendReadySignal() {
+        guard let conn = activeControlConnection else { return }
+        
+        let readyMsg: [String: Any] = [
+            "event": "ready",
+            "status": "streaming",
+            "resolution": currentResolution,
+            "fps": currentFPS,
+            "lens": currentLensType == .builtInTelephotoCamera ? "telephoto" :
+                    currentLensType == .builtInUltraWideCamera ? "ultrawide" :
+                    currentPosition == .front ? "front" : "wide"
+        ]
+        
+        if let data = try? JSONSerialization.data(withJSONObject: readyMsg, options: []) {
+            var length = UInt32(data.count).bigEndian
+            let header = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
+            let packet = header + data
+            conn.send(content: packet, completion: .contentProcessed({ _ in
+                print("[+] Señal 'ready' enviada a Windows.")
+            }))
         }
     }
     
@@ -754,7 +781,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: (60 as NSNumber) as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: (30 as NSNumber) as CFNumber) // Keyframe cada 1s (antes era 60)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -16,6 +17,8 @@ using Windows.Media.FaceAnalysis;
 using Windows.Media;
 using Windows.Graphics.Imaging;
 using System.Runtime.InteropServices.WindowsRuntime;
+using WinForms = System.Windows.Forms;
+using Drawing = System.Drawing;
 
 namespace desktop_app
 {
@@ -29,7 +32,14 @@ namespace desktop_app
         private VirtualCameraBridge _virtualCameraBridge = new VirtualCameraBridge();
         private Process? _ffmpegProcess;
         
-
+        // ========== RETRY & CONNECTION STATE ==========
+        private int _connectionRetryCount = 0;
+        private const int MaxConnectionRetries = 15;
+        private const int InitialReadTimeoutMs = 8000; // 8s warm-up para iOS
+        private const int StreamReadTimeoutMs = 1000;  // 1s durante streaming normal
+        private bool _isInWarmupPhase = false;
+        private bool _hasEverReceivedVideo = false;
+        // ==============================================
         
         // Dynamic control USB connection (Port 6001)
         private iDeviceConnectionHandle? _activeControlConn;
@@ -68,6 +78,10 @@ namespace desktop_app
         private bool _isAutoFramingEnabled = false;
         private bool _isAutoFramingZoomEnabled = false;
 
+        // System Tray
+        private WinForms.NotifyIcon? _trayIcon;
+        private bool _isExiting = false;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -79,6 +93,64 @@ namespace desktop_app
 
             // Start hardware-accelerated face tracker initialization
             _ = InitFaceTrackerAsync();
+
+            // Initialize System Tray Icon
+            InitializeTrayIcon();
+        }
+
+        private void InitializeTrayIcon()
+        {
+            _trayIcon = new WinForms.NotifyIcon
+            {
+                Text = "Antigravity Webcam",
+                Visible = true,
+                Icon = Drawing.SystemIcons.Application // Icono por defecto
+            };
+
+            // Intentar cargar un icono personalizado si existe
+            string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+            if (System.IO.File.Exists(iconPath))
+            {
+                try { _trayIcon.Icon = new Drawing.Icon(iconPath); } catch { }
+            }
+
+            // Menú contextual
+            var contextMenu = new WinForms.ContextMenuStrip();
+            contextMenu.Items.Add("Mostrar", null, (s, e) => ShowFromTray());
+            contextMenu.Items.Add("Salir", null, (s, e) => ExitApplication());
+            _trayIcon.ContextMenuStrip = contextMenu;
+
+            // Doble clic para mostrar
+            _trayIcon.DoubleClick += (s, e) => ShowFromTray();
+        }
+
+        private void ShowFromTray()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+        }
+
+        private void ExitApplication()
+        {
+            _isExiting = true;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            Close();
+        }
+
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            if (!_isExiting)
+            {
+                // Minimizar a la bandeja en lugar de cerrar
+                e.Cancel = true;
+                Hide();
+            }
+            else
+            {
+                base.OnClosing(e);
+            }
         }
 
         private void InitializeLibiMobileDevice()
@@ -90,8 +162,20 @@ namespace desktop_app
                 Log("[+] Librerías nativas cargadas con éxito.");
 
                 // Initialize UnityCapture Virtual Camera
-                _virtualCameraBridge.Initialize();
-                Log("[+] Puente de cámara virtual DirectShow (UnityCapture) inicializado.");
+                try
+                {
+                    _virtualCameraBridge.Initialize();
+                    Log("[+] Puente de cámara virtual DirectShow (UnityCapture) inicializado.");
+                    
+                    // Verificar que el driver esté realmente instalado
+                    CheckUnityCaptureDriver();
+                }
+                catch (Exception ex)
+                {
+                    Log($"[-] ADVERTENCIA: No se pudo inicializar la cámara virtual: {ex.Message}");
+                    Log("    La cámara virtual NO estará disponible en Zoom/OBS hasta que instales el driver UnityCapture.");
+                    Log("    Ve a la carpeta 'driver/' del proyecto y sigue las instrucciones de instalación.");
+                }
 
                 // Start device polling
                 _devicePollTimer = new DispatcherTimer();
@@ -187,7 +271,7 @@ namespace desktop_app
             {
                 if (string.IsNullOrEmpty(_connectedDeviceUdid))
                 {
-                    MessageBox.Show("Por favor, conecta un iPhone por cable USB primero.", "Dispositivo no detectado", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    System.Windows.MessageBox.Show("Por favor, conecta un iPhone por cable USB primero.", "Dispositivo no detectado", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
                     return;
                 }
                 StartTunnel();
@@ -286,6 +370,14 @@ namespace desktop_app
         {
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
 
+            // Verificar que ffmpeg.exe sea accesible
+            string ffmpegPath = FindFFmpegExecutable();
+            if (ffmpegPath == null)
+            {
+                throw new Exception("ffmpeg.exe no encontrado. Descárgalo desde https://ffmpeg.org/download.html y agrégalo al PATH, o colócalo en la carpeta de la aplicación.");
+            }
+            Log($"[+] FFmpeg encontrado en: {ffmpegPath}");
+
             int width = 1920;
             int height = 1080;
 
@@ -322,12 +414,15 @@ namespace desktop_app
             }
             catch { }
             
-            // Recibe mediante stdin (pipe:0)
-            string args = $"-probesize 32 -analyzeduration 0 -f h264 -avoid_negative_ts make_zero -fflags nobuffer -flags low_delay -i pipe:0 -vsync 0 -threads 1 -vf scale={width}:{height} -f rawvideo -pix_fmt rgba pipe:1";
+            // Decodificador ultra-low-latency
+            // -rtbufsize 1M: buffer mínimo para tiempo real
+            // -max_delay 0: sin delay de muxer
+            // -fflags +nobuffer+discardcorrupt: sin buffer de entrada
+            string args = $"-rtbufsize 1M -max_delay 0 -probesize 32 -analyzeduration 0 -f h264 -fflags +nobuffer+discardcorrupt -flags +low_delay -avoid_negative_ts make_zero -i pipe:0 -threads 1 -fps_mode passthrough -vsync 0 -vf scale={width}:{height}:flags=fast_bilinear -flush_packets 1 -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
             {
-                FileName = "ffmpeg.exe",
+                FileName = ffmpegPath,
                 Arguments = args,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -339,14 +434,14 @@ namespace desktop_app
             _ffmpegProcess = Process.Start(startInfo);
             if (_ffmpegProcess == null)
             {
-                throw new Exception("No se pudo arrancar ffmpeg.exe. Verifica que esté en tu PATH.");
+                throw new Exception($"No se pudo arrancar {ffmpegPath}. Verifica que el archivo exista y sea ejecutable.");
             }
 
             // Leer stderr
             _ = Task.Run(() => ReadFFmpegStderrAsync(_ffmpegProcess.StandardError, token));
 
             // Leer frames decodificados
-            _ = Task.Run(() => ReadDecodedFramesAsync(_ffmpegProcess.StandardOutput.BaseStream, token));
+            _ = Task.Run(() => ReadDecodedFrames(_ffmpegProcess.StandardOutput.BaseStream, token));
         }
 
         private async Task ReadFFmpegStderrAsync(StreamReader stderrReader, CancellationToken token)
@@ -356,8 +451,12 @@ namespace desktop_app
                 string? line;
                 while (!token.IsCancellationRequested && (line = await stderrReader.ReadLineAsync(token)) != null)
                 {
+                    // Solo loguear errores/warnings reales, no líneas de estadísticas
                     string logLine = line;
-                    if (!string.IsNullOrWhiteSpace(logLine))
+                    if (!string.IsNullOrWhiteSpace(logLine) && 
+                        (logLine.Contains("error", StringComparison.OrdinalIgnoreCase) || 
+                         logLine.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                         logLine.Contains("warning", StringComparison.OrdinalIgnoreCase)))
                     {
                         Dispatcher.Invoke(() => Log($"[FFmpeg] {logLine}"));
                     }
@@ -366,7 +465,7 @@ namespace desktop_app
             catch { }
         }
 
-        private async Task ReadDecodedFramesAsync(Stream ffmpegStdout, CancellationToken token)
+        private void ReadDecodedFrames(Stream ffmpegStdout, CancellationToken token)
         {
             int width = _activeWidth;
             int height = _activeHeight;
@@ -380,7 +479,7 @@ namespace desktop_app
                     int totalRead = 0;
                     while (totalRead < frameSize && !token.IsCancellationRequested)
                     {
-                        int read = await ffmpegStdout.ReadAsync(frameBuffer, totalRead, frameSize - totalRead, token);
+                        int read = ffmpegStdout.Read(frameBuffer, totalRead, frameSize - totalRead);
                         if (read == 0) break;
                         totalRead += read;
                     }
@@ -456,86 +555,175 @@ namespace desktop_app
         private async Task ConnectAndStreamFromIphoneAsync(string udid, ushort targetPort, CancellationToken token)
         {
             var idevice = LibiMobileDevice.Instance.iDevice;
-            iDeviceHandle? deviceHandle = null;
-            iDeviceConnectionHandle? deviceConnHandle = null;
+            var packetQueue = new BlockingCollection<byte[]>(new ConcurrentQueue<byte[]>(), 2); // Ultra baja latencia: solo 2 paquetes
+            byte[] lengthBuf = new byte[4];
+            byte[] startCode = new byte[] { 0, 0, 0, 1 };
+            
+            _connectionRetryCount = 0;
+            _isInWarmupPhase = true;
+            _hasEverReceivedVideo = false;
 
-            try
-            {
-                var err = idevice.idevice_new(out deviceHandle, udid);
-                if (err != iDeviceError.Success) throw new Exception($"Error abriendo dispositivo: {err}");
-
-                err = idevice.idevice_connect(deviceHandle, targetPort, out deviceConnHandle);
-                if (err != iDeviceError.Success) throw new Exception($"Error conectando al puerto {targetPort}: {err}");
-
-                Dispatcher.Invoke(() => {
-                    Log("[+] Flujo de video USB establecido.");
-                    if (PlaceholderGrid != null) PlaceholderGrid.Visibility = Visibility.Collapsed;
-                    if (StatusIndicatorDot != null) StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
-                    if (StatusBadgeText != null)
-                    {
-                        StatusBadgeText.Text = "TRANSMITIENDO";
-                        StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
-                    }
-                });
-
-                byte[] lengthBuf = new byte[4];
-                byte[] startCode = new byte[] { 0, 0, 0, 1 };
-
-                while (!token.IsCancellationRequested)
+            // Mostrar "CONECTANDO..." en la UI
+            Dispatcher.Invoke(() => {
+                Log("[*] Iniciando ciclo de conexión con reintentos...");
+                if (StatusBadgeText != null)
                 {
-                    var rErr = ReadExactBytes(deviceConnHandle, lengthBuf, 4, token);
-                    if (rErr != iDeviceError.Success) throw new IOException($"Error de lectura en cabecera USB: {rErr}");
+                    StatusBadgeText.Text = "CONECTANDO...";
+                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#f59e0b")!;
+                }
+            });
 
-                    uint packetLength = (uint)((lengthBuf[0] << 24) | (lengthBuf[1] << 16) | (lengthBuf[2] << 8) | lengthBuf[3]);
-                    if (packetLength == 0) continue;
-
-                    byte[] packetBuffer = new byte[packetLength];
-                    rErr = ReadExactBytes(deviceConnHandle, packetBuffer, (int)packetLength, token);
-                    if (rErr != iDeviceError.Success) throw new IOException($"Error de lectura en payload USB: {rErr}");
-
-                    var stream = _ffmpegProcess?.StandardInput.BaseStream;
-                    if (stream != null && !_ffmpegProcess.HasExited)
+            // Write task: consume cola y escribe a FFmpeg (vive durante todo el ciclo)
+            var writeTask = Task.Run(() =>
+            {
+                try
+                {
+                    foreach (var packetBuffer in packetQueue.GetConsumingEnumerable(token))
                     {
-                        if (packetLength >= 4)
+                        var stream = _ffmpegProcess?.StandardInput.BaseStream;
+                        if (stream != null && _ffmpegProcess != null && !_ffmpegProcess.HasExited)
                         {
-                            uint firstVal = (uint)((packetBuffer[0] << 24) | (packetBuffer[1] << 16) | (packetBuffer[2] << 8) | packetBuffer[3]);
-                            
-                            if (firstVal > 0 && firstVal + 4 <= packetLength)
+                            int packetLength = packetBuffer.Length;
+                            if (packetLength >= 4)
                             {
-                                int offset = 0;
-                                while (offset + 4 <= packetLength)
+                                uint firstVal = (uint)((packetBuffer[0] << 24) | (packetBuffer[1] << 16) | (packetBuffer[2] << 8) | packetBuffer[3]);
+                                
+                                if (firstVal > 0 && firstVal + 4 <= packetLength)
                                 {
-                                    uint nalLen = (uint)((packetBuffer[offset] << 24) | (packetBuffer[offset + 1] << 16) | (packetBuffer[offset + 2] << 8) | packetBuffer[offset + 3]);
-                                    if (offset + 4 + nalLen > packetLength) break;
-                                    
-                                    await stream.WriteAsync(startCode, 0, 4, token);
-                                    await stream.WriteAsync(packetBuffer, offset + 4, (int)nalLen, token);
-                                    
-                                    offset += 4 + (int)nalLen;
+                                    int offset = 0;
+                                    while (offset + 4 <= packetLength)
+                                    {
+                                        uint nalLen = (uint)((packetBuffer[offset] << 24) | (packetBuffer[offset + 1] << 16) | (packetBuffer[offset + 2] << 8) | packetBuffer[offset + 3]);
+                                        if (offset + 4 + nalLen > packetLength) break;
+                                        
+                                        stream.Write(startCode, 0, 4);
+                                        stream.Write(packetBuffer, offset + 4, (int)nalLen);
+                                        
+                                        offset += 4 + (int)nalLen;
+                                    }
+                                }
+                                else
+                                {
+                                    stream.Write(startCode, 0, 4);
+                                    stream.Write(packetBuffer, 0, packetLength);
                                 }
                             }
-                            else
-                            {
-                                await stream.WriteAsync(startCode, 0, 4, token);
-                                await stream.WriteAsync(packetBuffer, 0, (int)packetLength, token);
-                            }
+                            stream.Flush();
                         }
-                        await stream.FlushAsync(token);
                     }
                 }
-            }
-            catch (Exception ex)
+                catch (OperationCanceledException) { }
+                catch (Exception wEx)
+                {
+                    Log($"[-] Error en hilo de escritura FFmpeg: {wEx.Message}");
+                }
+            }, token);
+
+            // Bucle principal de conexión con reintentos
+            while (!token.IsCancellationRequested && _connectionRetryCount < MaxConnectionRetries)
             {
-                Dispatcher.Invoke(() => {
-                    Log($"[-] Transmisión finalizada: {ex.Message}");
-                    StopTunnel();
-                });
+                iDeviceHandle? deviceHandle = null;
+                iDeviceConnectionHandle? deviceConnHandle = null;
+
+                try
+                {
+                    var err = idevice.idevice_new(out deviceHandle, udid);
+                    if (err != iDeviceError.Success) throw new Exception($"Error abriendo dispositivo: {err}");
+
+                    err = idevice.idevice_connect(deviceHandle, targetPort, out deviceConnHandle);
+                    if (err != iDeviceError.Success) throw new Exception($"Error conectando al puerto {targetPort}: {err}");
+
+                    Dispatcher.Invoke(() => {
+                        Log($"[+] Intento {_connectionRetryCount + 1}: Conectado al puerto {targetPort}. Esperando primer paquete de video...");
+                    });
+
+                    // ---- FASE DE LECTURA ----
+                    while (!token.IsCancellationRequested)
+                    {
+                        // Usar timeout más largo durante warm-up, más corto durante streaming
+                        int readTimeout = _isInWarmupPhase ? InitialReadTimeoutMs : StreamReadTimeoutMs;
+                        
+                        var rErr = ReadExactBytes(deviceConnHandle, lengthBuf, 4, token, readTimeout);
+                        if (rErr != iDeviceError.Success)
+                        {
+                            if (_hasEverReceivedVideo)
+                                throw new IOException($"Error de lectura en cabecera USB: {rErr}");
+                            else
+                                throw new TimeoutException($"Timeout esperando primer paquete de video (timeout={readTimeout}ms)");
+                        }
+
+                        uint packetLength = (uint)((lengthBuf[0] << 24) | (lengthBuf[1] << 16) | (lengthBuf[2] << 8) | lengthBuf[3]);
+                        if (packetLength == 0) continue;
+
+                        byte[] packetBuffer = new byte[packetLength];
+                        rErr = ReadExactBytes(deviceConnHandle, packetBuffer, (int)packetLength, token, readTimeout);
+                        if (rErr != iDeviceError.Success)
+                        {
+                            if (_hasEverReceivedVideo)
+                                throw new IOException($"Error de lectura en payload USB: {rErr}");
+                            else
+                                throw new TimeoutException($"Timeout leyendo payload de video (timeout={readTimeout}ms)");
+                        }
+
+                        // ¡Primer paquete recibido con éxito! Salir de warm-up
+                        if (_isInWarmupPhase)
+                        {
+                            _isInWarmupPhase = false;
+                            _hasEverReceivedVideo = true;
+                            _connectionRetryCount = 0;
+                            Dispatcher.Invoke(() => {
+                                Log("[+] ¡Primer paquete de video recibido! Streaming estable.");
+                                if (PlaceholderGrid != null) PlaceholderGrid.Visibility = Visibility.Collapsed;
+                                if (StatusIndicatorDot != null) StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
+                                if (StatusBadgeText != null)
+                                {
+                                    StatusBadgeText.Text = "TRANSMITIENDO";
+                                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
+                                }
+                            });
+                        }
+
+                        // Descartar frames viejos si la cola está llena (baja latencia)
+                        while (packetQueue.Count >= 2)
+                        {
+                            packetQueue.TryTake(out _);
+                        }
+                        packetQueue.TryAdd(packetBuffer);
+                    }
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    _connectionRetryCount++;
+                    Dispatcher.Invoke(() => {
+                        Log($"[-] Intento {_connectionRetryCount}/{MaxConnectionRetries}: {ex.GetType().Name} - {ex.Message}");
+                    });
+
+                    if (_connectionRetryCount >= MaxConnectionRetries)
+                    {
+                        Dispatcher.Invoke(() => {
+                            Log($"[-] Se agotaron los {MaxConnectionRetries} reintentos. Deteniendo túnel.");
+                            StopTunnel();
+                        });
+                        break;
+                    }
+
+                    // Esperar antes de reintentar (incrementando el delay)
+                    int delay = Math.Min(1000 * _connectionRetryCount, 5000); // 1s, 2s, 3s, 4s, 5s max
+                    try { await Task.Delay(delay, token); } catch { break; }
+                }
+                finally
+                {
+                    deviceConnHandle?.Dispose();
+                    deviceHandle?.Dispose();
+                    deviceConnHandle = null;
+                    deviceHandle = null;
+                }
             }
-            finally
-            {
-                deviceConnHandle?.Dispose();
-                deviceHandle?.Dispose();
-            }
+
+            packetQueue.CompleteAdding();
+            try { await writeTask; } catch { }
+            packetQueue.Dispose();
         }
 
         // Conectar el socket del canal de control bidireccional (Puerto 6001)
@@ -596,65 +784,75 @@ namespace desktop_app
             {
                 using JsonDocument doc = JsonDocument.Parse(jsonStr);
                 JsonElement root = doc.RootElement;
-                if (root.TryGetProperty("event", out var evProp) && evProp.GetString() == "deviceInfo")
+                if (root.TryGetProperty("event", out var evProp))
                 {
-                    int batteryLevel = root.GetProperty("batteryLevel").GetInt32();
-                    bool isCharging = root.GetProperty("isCharging").GetBoolean();
-                    string deviceName = root.GetProperty("deviceName").GetString();
-                    string systemVersion = root.GetProperty("systemVersion").GetString();
-                    string lens = root.GetProperty("lens").GetString();
-                    string resolution = root.GetProperty("resolution").GetString();
-                    double fps = root.GetProperty("fps").GetDouble();
+                    string eventType = evProp.GetString() ?? "";
 
-                    Dispatcher.Invoke(() =>
+                    if (eventType == "ready")
                     {
-                        _isUpdatingUi = true;
-                        
-                        // Update Battery Telemetry
-                        BatteryPercentageText.Text = $"{batteryLevel}%";
-                        BatteryIcon.Text = isCharging ? "⚡" : "🔋";
-                        
-                        // System info label
-                        DeviceDetailsText.Text = $"iOS {systemVersion} • USB Conectado";
-
-                        // Update device combobox name
-                        if (DeviceComboBox.Items.Count > 0 && DeviceComboBox.Items[0] is System.Windows.Controls.ComboBoxItem firstItem)
+                        string resolution = root.TryGetProperty("resolution", out var resProp) ? resProp.GetString() ?? "?" : "?";
+                        double fps = root.TryGetProperty("fps", out var fpsProp) ? fpsProp.GetDouble() : 0;
+                        string lens = root.TryGetProperty("lens", out var lensProp) ? lensProp.GetString() ?? "?" : "?";
+                        Dispatcher.Invoke(() =>
                         {
-                            firstItem.Content = deviceName;
-                        }
+                            Log($"[+] Señal 'ready' desde iOS: {resolution} @ {fps}FPS, lente: {lens}");
+                        });
+                        return;
+                    }
 
-                        // Sync Lens selector dropdown
-                        foreach (System.Windows.Controls.ComboBoxItem item in LensComboBox.Items)
+                    if (eventType == "deviceInfo")
+                    {
+                        int batteryLevel = root.GetProperty("batteryLevel").GetInt32();
+                        bool isCharging = root.GetProperty("isCharging").GetBoolean();
+                        string deviceName = root.GetProperty("deviceName").GetString();
+                        string systemVersion = root.GetProperty("systemVersion").GetString();
+                        string lens = root.GetProperty("lens").GetString();
+                        string resolution = root.GetProperty("resolution").GetString();
+                        double fps = root.GetProperty("fps").GetDouble();
+
+                        Dispatcher.Invoke(() =>
                         {
-                            if (item.Tag?.ToString() == lens)
+                            _isUpdatingUi = true;
+
+                            BatteryPercentageText.Text = $"{batteryLevel}%";
+                            BatteryIcon.Text = isCharging ? "⚡" : "🔋";
+                            DeviceDetailsText.Text = $"iOS {systemVersion} • USB Conectado";
+
+                            if (DeviceComboBox.Items.Count > 0 && DeviceComboBox.Items[0] is System.Windows.Controls.ComboBoxItem firstItem)
                             {
-                                LensComboBox.SelectedItem = item;
-                                break;
+                                firstItem.Content = deviceName;
                             }
-                        }
 
-                        // Sync Resolution selector dropdown
-                        foreach (System.Windows.Controls.ComboBoxItem item in ResolutionComboBox.Items)
-                        {
-                            if (item.Tag?.ToString() == resolution)
+                            foreach (System.Windows.Controls.ComboBoxItem item in LensComboBox.Items)
                             {
-                                ResolutionComboBox.SelectedItem = item;
-                                break;
+                                if (item.Tag?.ToString() == lens)
+                                {
+                                    LensComboBox.SelectedItem = item;
+                                    break;
+                                }
                             }
-                        }
 
-                        // Sync FPS selector dropdown
-                        foreach (System.Windows.Controls.ComboBoxItem item in FpsComboBox.Items)
-                        {
-                            if (item.Tag?.ToString() == fps.ToString())
+                            foreach (System.Windows.Controls.ComboBoxItem item in ResolutionComboBox.Items)
                             {
-                                FpsComboBox.SelectedItem = item;
-                                break;
+                                if (item.Tag?.ToString() == resolution)
+                                {
+                                    ResolutionComboBox.SelectedItem = item;
+                                    break;
+                                }
                             }
-                        }
 
-                        _isUpdatingUi = false;
-                    });
+                            foreach (System.Windows.Controls.ComboBoxItem item in FpsComboBox.Items)
+                            {
+                                if (item.Tag?.ToString() == fps.ToString())
+                                {
+                                    FpsComboBox.SelectedItem = item;
+                                    break;
+                                }
+                            }
+
+                            _isUpdatingUi = false;
+                        });
+                    }
                 }
             }
             catch { }
@@ -965,9 +1163,13 @@ namespace desktop_app
         {
             outWidth = width;
             outHeight = height;
-            byte[] processed = inputRgba;
 
-            // Trigger asynchronous WinRT face detection
+            // Hacer una copia defensiva para evitar modificar el frameBuffer original
+            // y prevenir cualquier corrupción entre frames
+            byte[] processed = new byte[inputRgba.Length];
+            Buffer.BlockCopy(inputRgba, 0, processed, 0, inputRgba.Length);
+
+            // Trigger asynchronous WinRT face detection (usa inputRgba original antes del espejo)
             TriggerFaceDetection(inputRgba, width, height);
 
             // 1. Apply Spotlight (Face Highlight)
@@ -1005,19 +1207,20 @@ namespace desktop_app
 
         private byte[] ApplyMirror(byte[] rgba, int width, int height)
         {
-            byte[] output = new byte[rgba.Length];
             int rowSize = width * 4;
+            byte[] output = new byte[rgba.Length];
+
             for (int y = 0; y < height; y++)
             {
-                int srcRowStart = y * rowSize;
+                int rowStart = y * rowSize;
                 for (int x = 0; x < width; x++)
                 {
-                    int srcPixel = srcRowStart + x * 4;
-                    int destPixel = srcRowStart + (width - 1 - x) * 4;
-                    output[destPixel] = rgba[srcPixel];
-                    output[destPixel + 1] = rgba[srcPixel + 1];
-                    output[destPixel + 2] = rgba[srcPixel + 2];
-                    output[destPixel + 3] = rgba[srcPixel + 3];
+                    int srcOff = rowStart + x * 4;
+                    int dstOff = rowStart + (width - 1 - x) * 4;
+                    output[dstOff] = rgba[srcOff];
+                    output[dstOff + 1] = rgba[srcOff + 1];
+                    output[dstOff + 2] = rgba[srcOff + 2];
+                    output[dstOff + 3] = rgba[srcOff + 3];
                 }
             }
             return output;
@@ -1148,7 +1351,67 @@ namespace desktop_app
                 }
             }
         }
-        private iDeviceError ReadExactBytes(iDeviceConnectionHandle connection, byte[] targetBuffer, int length, CancellationToken token)
+        private void CheckUnityCaptureDriver()
+        {
+            try
+            {
+                // Intentar abrir el MMF para verificar que el driver está activo
+                using var testMmf = System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting("UnityCapture_Data");
+                Log("[+] Driver UnityCapture detectado. Cámara virtual disponible.");
+            }
+            catch (FileNotFoundException)
+            {
+                Log("[-] Driver UnityCapture NO registrado. La cámara virtual no estará disponible.");
+                Log("    Para activarla, ejecuta 'InstallVirtualCamera.bat' como ADMINISTRADOR.");
+                Log("    Luego reinicia las apps (OBS, Zoom, Chrome, etc.) para que detecten la cámara.");
+            }
+        }
+
+        private string? FindFFmpegExecutable()
+        {
+            // 1. Buscar en el directorio de la aplicación
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            string localPath = Path.Combine(appDir, "ffmpeg.exe");
+            if (File.Exists(localPath)) return localPath;
+
+            // 2. Buscar en el PATH del sistema
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "where",
+                        Arguments = "ffmpeg.exe",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        CreateNoWindow = true
+                    }
+                };
+                process.Start();
+                string output = process.StandardOutput.ReadLine() ?? "";
+                process.WaitForExit(3000);
+                if (!string.IsNullOrEmpty(output) && File.Exists(output.Trim()))
+                    return output.Trim();
+            }
+            catch { }
+
+            // 3. Buscar en rutas comunes
+            string[] commonPaths = {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
+                @"C:\ffmpeg\bin\ffmpeg.exe",
+                @"C:\tools\ffmpeg\bin\ffmpeg.exe"
+            };
+            foreach (var path in commonPaths)
+            {
+                if (File.Exists(path)) return path;
+            }
+
+            return null;
+        }
+
+        private iDeviceError ReadExactBytes(iDeviceConnectionHandle connection, byte[] targetBuffer, int length, CancellationToken token, int timeoutMs = 1000)
         {
             var idevice = LibiMobileDevice.Instance.iDevice;
             int totalRead = 0;
@@ -1159,7 +1422,7 @@ namespace desktop_app
                 uint readThisTime = 0;
                 uint toRead = (uint)(length - totalRead);
                 
-                var err = idevice.idevice_connection_receive_timeout(connection, tempBuffer, toRead, ref readThisTime, 1000);
+                var err = idevice.idevice_connection_receive_timeout(connection, tempBuffer, toRead, ref readThisTime, (uint)timeoutMs);
                 if (err != iDeviceError.Success) return err;
 
                 if (readThisTime > 0)
@@ -1434,6 +1697,7 @@ namespace desktop_app
             StopTunnel();
             _devicePollTimer?.Stop();
             _virtualCameraBridge.Dispose();
+            _trayIcon?.Dispose();
             base.OnClosed(e);
         }
     }

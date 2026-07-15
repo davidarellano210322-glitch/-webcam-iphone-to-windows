@@ -1,0 +1,50 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:  # Permite ejecución manual desde GitHub
+
+jobs:
+  build-ios:
+    name: Build Flutter iOS
+    runs-on: macos-latest
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Instalar dependencias Flutter
+        working-directory: mobile_app
+        run: flutter pub get
+
+      - name: 🔨 Build iOS (sin firma - desarrollo)
+        working-directory: mobile_app
+        run: |
+          flutter build ios --release --no-codesign
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -r Runner.ipa Payload
+          rm -rf Payload
+
+      - name: 📤 Subir .ipa como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Runner.ipa
+          path: mobile_app/build/ios/iphoneos/Runner.ipa
+          retention-days: 30
+
+      - name: 📤 Subir .app como artifact (alternativa)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Runner.app
+          path: mobile_app/build/ios/iphoneos/Runner.app
+          retention-days: 30
