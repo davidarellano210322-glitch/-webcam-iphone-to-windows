@@ -17,22 +17,15 @@ jobs:
       - name: 🐦 Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.0'
+          flutter-version: '3.44.6'
           channel: 'stable'
           cache: true
 
-      - name: 🔍 Debug - ver estructura
-        working-directory: mobile_app
-        run: |
-          ls -la
-          flutter --version
-          flutter doctor
-
-      - name: 📦 Instalar dependencias Flutter
+      - name: 📦 Instalar dependencias
         working-directory: mobile_app
         run: flutter pub get
 
-      - name: 🔨 Build iOS (sin firma - desarrollo)
+      - name: 🔨 Build iOS (sin firma)
         working-directory: mobile_app
         run: |
           flutter build ios --release --no-codesign
