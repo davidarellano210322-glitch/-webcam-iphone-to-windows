@@ -126,10 +126,10 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         socketQueue.async { [weak self] in
             guard let self = self else { return }
             
-            if self.activeControlConnection != nil {
-                print("[*] Canal de control ya está activo. Rechazando nueva conexion.")
-                connection.cancel()
-                return
+            if let oldConnection = self.activeControlConnection {
+                print("[*] Canal de control ya está activo. Reemplazando conexión anterior.")
+                oldConnection.cancel()
+                self.activeControlConnection = nil
             }
             
             print("[+] Canal de Control establecido con Windows.")
@@ -507,10 +507,10 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         socketQueue.async { [weak self] in
             guard let self = self else { return }
             
-            if self.activeConnection != nil {
-                print("[*] Rechazando nueva conexión USB: ya hay una activa.")
-                connection.cancel()
-                return
+            if let oldConnection = self.activeConnection {
+                print("[*] Conexión USB ya está activa. Reemplazando conexión anterior.")
+                oldConnection.cancel()
+                self.activeConnection = nil
             }
             
             print("[+] PC conectada a través del túnel USB.")
@@ -767,8 +767,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         let limits = [limitBytes, limitWindow] as CFArray
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
         
-        let quality: Float = 0.85
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: quality as CFNumber)
+
         
         VTCompressionSessionPrepareToEncodeFrames(session)
         print("[+] Codificador VideoToolbox optimizado para \(currentResolution) a \(currentFPS) FPS.")

@@ -1152,34 +1152,27 @@ namespace desktop_app
         {
             var idevice = LibiMobileDevice.Instance.iDevice;
             int totalRead = 0;
-            byte[] tempBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(length);
+            byte[] tempBuffer = new byte[length];
 
-            try
+            while (totalRead < length && !token.IsCancellationRequested)
             {
-                while (totalRead < length && !token.IsCancellationRequested)
+                uint readThisTime = 0;
+                uint toRead = (uint)(length - totalRead);
+                
+                var err = idevice.idevice_connection_receive_timeout(connection, tempBuffer, toRead, ref readThisTime, 1000);
+                if (err != iDeviceError.Success) return err;
+
+                if (readThisTime > 0)
                 {
-                    uint readThisTime = 0;
-                    uint toRead = (uint)(length - totalRead);
-                    
-                    var err = idevice.idevice_connection_receive_timeout(connection, tempBuffer, toRead, ref readThisTime, 1000);
-                    if (err != iDeviceError.Success) return err;
-
-                    if (readThisTime > 0)
-                    {
-                        Buffer.BlockCopy(tempBuffer, 0, targetBuffer, totalRead, (int)readThisTime);
-                        totalRead += (int)readThisTime;
-                    }
-                    else
-                    {
-                        Thread.Sleep(1);
-                    }
+                    Buffer.BlockCopy(tempBuffer, 0, targetBuffer, totalRead, (int)readThisTime);
+                    totalRead += (int)readThisTime;
                 }
-                return iDeviceError.Success;
+                else
+                {
+                    Thread.Sleep(1);
+                }
             }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(tempBuffer);
-            }
+            return iDeviceError.Success;
         }
 
         private async Task InitFaceTrackerAsync()
