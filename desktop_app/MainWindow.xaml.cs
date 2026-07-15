@@ -489,7 +489,7 @@ namespace desktop_app
                         int outWidth, outHeight;
                         byte[] processedFrame = ApplyFrameProcessing(frameBuffer, width, height, out outWidth, out outHeight);
 
-                        _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame);
+                        _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame, _isMirrorActive);
 
                         // Feed the recorder if active
                         if (_isRecording && _ffmpegRecorderStdin != null && outWidth == _recordWidth && outHeight == _recordHeight)
@@ -1157,6 +1157,15 @@ namespace desktop_app
             {
                 _rotationAngle = angle;
             }
+
+            // Aplicar espejo a la preview usando ScaleTransform (GPU, cero procesamiento de píxeles)
+            if (VideoPreviewImage != null)
+            {
+                var scale = new System.Windows.Media.ScaleTransform(_isMirrorActive ? -1 : 1, 1);
+                scale.CenterX = 0.5;
+                VideoPreviewImage.RenderTransform = scale;
+                VideoPreviewImage.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+            }
         }
 
         private byte[] ApplyFrameProcessing(byte[] inputRgba, int width, int height, out int outWidth, out int outHeight)
@@ -1164,13 +1173,28 @@ namespace desktop_app
             outWidth = width;
             outHeight = height;
 
-            // Hacer una copia defensiva para evitar modificar el frameBuffer original
-            // y prevenir cualquier corrupción entre frames
+            // Detectar si hay procesamiento activo
+            bool needsProcessing = _rotationAngle != 0 || 
+                                   (_activeFilter != "none" && _filterIntensity > 0.0) ||
+                                   (_isSpotlightEnabled && _faceDetected) ||
+                                   (_isAutoFramingEnabled && _faceDetected);
+
+            // TRUCO: Si NO hay procesamiento, devolvemos el buffer original sin copiar
+            // Esto elimina 8MB de copia por frame (~240MB/s a 30fps)
+            if (!needsProcessing)
+            {
+                return inputRgba;
+            }
+
+            // Solo copiamos si hay procesamiento activo
             byte[] processed = new byte[inputRgba.Length];
             Buffer.BlockCopy(inputRgba, 0, processed, 0, inputRgba.Length);
 
-            // Trigger asynchronous WinRT face detection (usa inputRgba original antes del espejo)
-            TriggerFaceDetection(inputRgba, width, height);
+            // Trigger asynchronous WinRT face detection (solo si se necesita)
+            if (_isSpotlightEnabled || _isAutoFramingEnabled)
+            {
+                TriggerFaceDetection(inputRgba, width, height);
+            }
 
             // 1. Apply Spotlight (Face Highlight)
             if (_isSpotlightEnabled && _faceDetected)
@@ -1178,13 +1202,11 @@ namespace desktop_app
                 ApplySpotlightInPlace(processed, width, height, _smoothFaceX, _smoothFaceY, _smoothFaceW, _smoothFaceH, _spotlightIntensityValue);
             }
 
-            // 2. Apply Mirror
-            if (_isMirrorActive)
-            {
-                processed = ApplyMirror(processed, width, height);
-            }
+            // NOTA: El espejo NO se hace aquí. Se pasa el flag `_isMirrorActive` 
+            // directamente a VirtualCameraBridge.WriteFrame que usa el MIRRORMODE
+            // del driver DirectShow (UnityCapture), evitando manipulación de píxeles.
 
-            // 3. Apply Rotation
+            // 2. Apply Rotation
             if (_rotationAngle != 0)
             {
                 processed = ApplyRotation(processed, width, height, _rotationAngle, out outWidth, out outHeight);
@@ -1205,25 +1227,29 @@ namespace desktop_app
             return processed;
         }
 
-        private byte[] ApplyMirror(byte[] rgba, int width, int height)
+        private void ApplyMirrorInPlace(byte[] rgba, int width, int height)
         {
             int rowSize = width * 4;
-            byte[] output = new byte[rgba.Length];
-
             for (int y = 0; y < height; y++)
             {
                 int rowStart = y * rowSize;
-                for (int x = 0; x < width; x++)
+                for (int x = 0; x < width / 2; x++)
                 {
-                    int srcOff = rowStart + x * 4;
-                    int dstOff = rowStart + (width - 1 - x) * 4;
-                    output[dstOff] = rgba[srcOff];
-                    output[dstOff + 1] = rgba[srcOff + 1];
-                    output[dstOff + 2] = rgba[srcOff + 2];
-                    output[dstOff + 3] = rgba[srcOff + 3];
+                    int left = rowStart + x * 4;
+                    int right = rowStart + (width - 1 - x) * 4;
+                    
+                    // Swap 4 bytes en una sola operación
+                    byte t0 = rgba[left], t1 = rgba[left+1], t2 = rgba[left+2], t3 = rgba[left+3];
+                    rgba[left]   = rgba[right];
+                    rgba[left+1] = rgba[right+1];
+                    rgba[left+2] = rgba[right+2];
+                    rgba[left+3] = rgba[right+3];
+                    rgba[right]   = t0;
+                    rgba[right+1] = t1;
+                    rgba[right+2] = t2;
+                    rgba[right+3] = t3;
                 }
             }
-            return output;
         }
 
         private byte[] ApplyRotation(byte[] rgba, int width, int height, int angle, out int outWidth, out int outHeight)
