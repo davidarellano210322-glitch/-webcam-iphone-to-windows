@@ -3,7 +3,7 @@ name: Build iOS App
 on:
   push:
     branches: [main, master]
-  workflow_dispatch:  # Permite ejecución manual desde GitHub
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -21,6 +21,13 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: 🔍 Debug - ver estructura
+        working-directory: mobile_app
+        run: |
+          ls -la
+          flutter --version
+          flutter doctor
+
       - name: 📦 Instalar dependencias Flutter
         working-directory: mobile_app
         run: flutter pub get
@@ -35,14 +42,14 @@ jobs:
           zip -r Runner.ipa Payload
           rm -rf Payload
 
-      - name: 📤 Subir .ipa como artifact
+      - name: 📤 Subir .ipa
         uses: actions/upload-artifact@v4
         with:
           name: Runner.ipa
           path: mobile_app/build/ios/iphoneos/Runner.ipa
           retention-days: 30
 
-      - name: 📤 Subir .app como artifact (alternativa)
+      - name: 📤 Subir .app
         uses: actions/upload-artifact@v4
         with:
           name: Runner.app
