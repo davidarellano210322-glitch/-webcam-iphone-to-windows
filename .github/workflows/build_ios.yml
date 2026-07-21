@@ -39,7 +39,7 @@ jobs:
       - name: Build iOS Workspace
         run: |
           cd mobile_app
-          flutter build ios --no-codesign
+          flutter build ios --debug --no-codesign
 
       - name: Package IPA
         run: |
