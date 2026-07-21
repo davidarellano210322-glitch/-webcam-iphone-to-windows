@@ -785,7 +785,7 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: (0 as NSNumber) as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: (currentFPS as NSNumber) as CFNumber)
         
-        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 15_000_000 : (currentResolution == "1080p" ? 7_500_000 : 4_500_000)
+        let rawBitrate: Int = currentResolution.lowercased() == "4k" ? 25_000_000 : (currentResolution == "1080p" ? 15_000_000 : 9_000_000)
         let targetBitrate = (rawBitrate as NSNumber) as CFNumber
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: targetBitrate)
         
