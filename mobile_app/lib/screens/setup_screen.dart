@@ -11,7 +11,7 @@ import '../widgets/custom_painters.dart';
 import '../widgets/neocamo_widgets.dart';
 
 class SetupScreen extends StatefulWidget {
-  final void Function(String ip) onConnect;
+  final void Function(String? ip) onConnect;
   final bool cameraPermission;
   final bool micPermission;
   final bool networkPermission;
@@ -57,23 +57,13 @@ class _SetupScreenState extends State<SetupScreen>
   }
 
   void _handleConnect() {
-    final ip = _ipController.text.trim();
-    if (ip.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Introduce la IP de tu PC'),
-          backgroundColor: NC.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
     HapticFeedback.mediumImpact();
     setState(() => _isConnecting = true);
 
-    // Simular delay de conexión para feedback visual
-    Future.delayed(const Duration(milliseconds: 500), () {
+    // Si hay IP manual, usarla. Si no, auto-descubrimiento (null)
+    final ip = _ipController.text.trim().isEmpty ? null : _ipController.text.trim();
+
+    Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         setState(() => _isConnecting = false);
         widget.onConnect(ip);
@@ -358,9 +348,9 @@ class _SetupScreenState extends State<SetupScreen>
         children: [
           _buildInstructionStep('1', 'Ejecuta server.py en tu PC Windows.'),
           const SizedBox(height: 12),
-          _buildInstructionStep('2', 'Introduce la IP que muestra el servidor.'),
+          _buildInstructionStep('2', 'Presiona Conectar. La IP se detecta automaticamente!'),
           const SizedBox(height: 12),
-          _buildInstructionStep('3', 'Presiona Conectar y comienza a transmitir.'),
+          _buildInstructionStep('3', 'Opcional: introduce la IP manualmente si falla el auto.'),
         ],
       ),
     );
@@ -407,15 +397,36 @@ class _SetupScreenState extends State<SetupScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'IP DEL SERVIDOR',
-          style: TextStyle(
-            fontFamily: 'Geist',
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: NC.primary,
-            letterSpacing: 2,
-          ),
+        Row(
+          children: [
+            const Text(
+              'IP DEL SERVIDOR (OPCIONAL)',
+              style: TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: NC.primary,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: NC.primary.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'AUTO',
+                style: TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
+                  color: NC.primary,
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         TextField(

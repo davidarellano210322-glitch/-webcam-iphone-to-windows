@@ -77,8 +77,8 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   bool _micPermission = false;
   bool _networkPermission = false;
 
-  // IP del servidor introducida por el usuario
-  String _serverIp = '';
+  // IP del servidor (opcional, se auto-descubre si está vacía)
+  String? _serverIp;
 
   late AnimationController _recPulseCtrl;
 
@@ -145,9 +145,9 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   }
 
   // ─── CONFIGURACIÓN DEL SERVIDOR ──────────────────────────────────────────
-  void _setServerIp(String ip) {
-    _serverIp = ip;
-    _telemetry.setServerConfig(ip);
+  void _setServerIp(String? ip) {
+    _serverIp = (ip != null && ip.isNotEmpty) ? ip : null;
+    _telemetry.setServerConfig(ip ?? '');
   }
 
   // ─── NAVEGACIÓN ───────────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       case 0:
         return SetupScreen(
           key: const ValueKey('SetupScreen'),
-          onConnect: (String ip) {
+          onConnect: (String? ip) {
             _setServerIp(ip);
             _goToMonitor();
           },
@@ -224,13 +224,13 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
         return SettingsScreen(
           key: const ValueKey('SettingsScreen'),
           telemetry: _telemetry,
-          serverIp: _serverIp,
-          onServerIpChanged: _setServerIp,
+          serverIp: _serverIp ?? '',
+          onServerIpChanged: (ip) => _setServerIp(ip),
           onBack: () => setState(() => _currentScreenIndex = 1),
         );
       default:
         return SetupScreen(
-          onConnect: (String ip) {
+          onConnect: (String? ip) {
             _setServerIp(ip);
             _goToMonitor();
           },

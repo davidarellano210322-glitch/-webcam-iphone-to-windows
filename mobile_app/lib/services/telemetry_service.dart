@@ -177,21 +177,13 @@ class TelemetryService {
   }
 
   Future<void> _startStream() async {
-    // Si no hay IP configurada, intentar detección automática
-    if (_serverIp.isEmpty) {
-      _updateState(_state.copyWith(
-        connectionStatus: 'CONFIGURA IP DEL SERVIDOR',
-      ));
-      return;
-    }
-
-    // Conectar al servidor WebSocket
-    _updateState(_state.copyWith(connectionStatus: 'CONECTANDO...'));
-    final connected = await _streaming.connect(_serverIp, port: _serverPort);
+    // Conectar al servidor WebSocket (auto-descubrimiento si no hay IP)
+    _updateState(_state.copyWith(connectionStatus: 'BUSCANDO SERVIDOR...'));
+    final connected = await _streaming.connect(_serverIp.isNotEmpty ? _serverIp : null);
 
     if (!connected) {
       _updateState(_state.copyWith(
-        connectionStatus: 'ERROR DE CONEXIÓN',
+        connectionStatus: 'SERVIDOR NO ENCONTRADO',
         isStreaming: false,
       ));
       return;
