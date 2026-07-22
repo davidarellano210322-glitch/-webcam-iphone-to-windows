@@ -39,7 +39,7 @@ jobs:
       - name: Build iOS Workspace
         run: |
           cd mobile_app
-          flutter build ios --debug --no-codesign
+          flutter build ios --debug --no-codesign 2>&1 || (echo "=== BUILD FAILED - XCODE LOG ===" && cat ios/Pods/build/*.log 2>/dev/null || true; exit 1)
 
       - name: Package IPA
         run: |
