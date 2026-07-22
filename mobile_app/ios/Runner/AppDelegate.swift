@@ -19,6 +19,7 @@ import AVFoundation
     controlChannel.setMethodCallHandler { [weak self] (call, result) in
       if #available(iOS 12.0, *) {
         switch call.method {
+        // ─── MÉTODOS EXISTENTES (originales) ──────────────────────────────
         case "startServer":
           WebcamStreamer.shared.startServer()
           result("ok")
@@ -42,6 +43,62 @@ import AVFoundation
             )
           }
           result("ok")
+          
+        // ─── NUEVOS MÉTODOS: CONTROL DE CÁMARA AVANZADO ────────────────────
+        case "setZoom":
+          if let args = call.arguments as? [String: Any],
+             let zoom = args["zoom"] as? Double {
+            WebcamStreamer.shared.setZoom(factor: Float(zoom))
+          }
+          result("ok")
+          
+        case "setExposure":
+          if let args = call.arguments as? [String: Any],
+             let value = args["value"] as? Double {
+            WebcamStreamer.shared.setExposure(bias: Float(value))
+          }
+          result("ok")
+          
+        case "setISO":
+          if let args = call.arguments as? [String: Any],
+             let iso = args["iso"] as? Double {
+            // Usar exposición custom con ISO: shutter duration por defecto (auto)
+            WebcamStreamer.shared.setExposureModeCustom(shutterDurationMs: 0, iso: Float(iso))
+          }
+          result("ok")
+          
+        case "setWhiteBalance":
+          if let args = call.arguments as? [String: Any],
+             let kelvin = args["kelvin"] as? Double {
+            // tint = 0 por defecto (solo controlamos temperatura en Kelvin)
+            WebcamStreamer.shared.setWhiteBalanceManual(temp: Float(kelvin), tint: 0)
+          }
+          result("ok")
+          
+        case "setResolution":
+          if let args = call.arguments as? [String: Any] {
+            let resStr = args["width"] as? String ?? "1080p"
+            let fps = args["fps"] as? Int ?? 30
+            WebcamStreamer.shared.updateCameraConfiguration(
+              position: nil, lensType: nil, resolution: resStr, fps: Double(fps)
+            )
+          }
+          result("ok")
+          
+        // ─── NUEVOS MÉTODOS: GRABACIÓN LOCAL ──────────────────────────────
+        case "startRecording":
+          WebcamStreamer.shared.startRecording()
+          result("ok")
+          
+        case "stopRecording":
+          let url = WebcamStreamer.shared.stopRecording()
+          result(url?.absoluteString)
+          
+        // ─── NUEVO MÉTODO: TELEMETRÍA EN TIEMPO REAL ──────────────────────
+        case "getTelemetry":
+          let telemetry = WebcamStreamer.shared.getTelemetry()
+          result(telemetry)
+          
         default:
           result(FlutterMethodNotImplemented)
         }

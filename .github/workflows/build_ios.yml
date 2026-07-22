@@ -1,4 +1,4 @@
-name: Build and Push iOS IPA
+name: Build and Release iOS IPA
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Flutter iOS (No Codesign)
+    name: Build Flutter iOS IPA
     runs-on: macos-latest
 
     steps:
@@ -36,7 +36,7 @@ jobs:
           cd mobile_app
           flutter pub get
 
-      - name: Build iOS Workspace
+      - name: Build iOS (No Codesign)
         run: |
           cd mobile_app
           flutter build ios --debug --no-codesign 2>&1 || (echo "=== BUILD FAILED - XCODE LOG ===" && cat ios/Pods/build/*.log 2>/dev/null || true; exit 1)
@@ -47,17 +47,59 @@ jobs:
           mkdir -p Payload
           cp -r Runner.app Payload/
           zip -r ../../../../ios/Runner.ipa Payload
+          ls -la ../../../../ios/Runner.ipa
 
-      - name: Commit and Push IPA
+      - name: Generate Build Info
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ios/Runner.ipa
-          git commit -m "chore: update compiled Runner.ipa [skip ci]" || echo "No changes to commit"
-          git push
+          echo "# NeoCamo Monitor iOS - Build Info" > BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "**Fecha de compilación:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> BUILD_INFO.md
+          echo "**Commit:** ${{ github.sha }}" >> BUILD_INFO.md
+          echo "**Rama:** ${{ github.ref_name }}" >> BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "## Cómo instalar este IPA" >> BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "Este IPA está compilado sin firma de código (--no-codesign)." >> BUILD_INFO.md
+          echo "Para instalarlo en tu iPhone necesitas una de estas opciones:" >> BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "### Opción 1: AltStore (Recomendado)" >> BUILD_INFO.md
+          echo "1. Descarga AltServer en tu PC: https://altstore.io" >> BUILD_INFO.md
+          echo "2. Conecta tu iPhone por USB" >> BUILD_INFO.md
+          echo "3. Instala AltStore en tu iPhone desde AltServer" >> BUILD_INFO.md
+          echo "4. Abre AltStore en tu iPhone y selecciona el archivo .ipa" >> BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "### Opción 2: Sideloadly" >> BUILD_INFO.md
+          echo "1. Descarga Sideloadly: https://sideloadly.io" >> BUILD_INFO.md
+          echo "2. Conecta tu iPhone por USB" >> BUILD_INFO.md
+          echo "3. Arrastra el archivo .ipa a Sideloadly" >> BUILD_INFO.md
+          echo "4. Ingresa tu Apple ID" >> BUILD_INFO.md
+          echo "5. Sideloadly firmará e instalará la app automáticamente" >> BUILD_INFO.md
+          echo "" >> BUILD_INFO.md
+          echo "> ⚠️ **Nota:** Las apps instaladas con cuenta gratuita de Apple expiran cada 7 días." >> BUILD_INFO.md
+          echo "> Necesitarás reinstalar la app cada semana a menos que tengas una cuenta de desarrollador paga." >> BUILD_INFO.md
 
-      - name: Archive Build Artifact
+      - name: Upload IPA as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Runner-iOS
-          path: mobile_app/build/ios/iphoneos
+          name: NeoCamo-iOS-IPA
+          path: mobile_app/ios/Runner.ipa
+          retention-days: 90
+
+      - name: Upload Build Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Info
+          path: BUILD_INFO.md
+          retention-days: 90
+
+      - name: Create Release
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.5.0-${{ github.run_number }}
+          name: NeoCamo Monitor v2.5.0 (Build ${{ github.run_number }})
+          body_path: BUILD_INFO.md
+          files: |
+            mobile_app/ios/Runner.ipa
+          draft: false
+          prerelease: false
