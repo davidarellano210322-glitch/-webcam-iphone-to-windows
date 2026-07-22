@@ -39,15 +39,29 @@ jobs:
       - name: Build iOS (No Codesign)
         run: |
           cd mobile_app
-          flutter build ios --debug --no-codesign 2>&1 || (echo "=== BUILD FAILED - XCODE LOG ===" && cat ios/Pods/build/*.log 2>/dev/null || true; exit 1)
+          flutter build ios --release --no-codesign 2>&1 || (echo "=== BUILD FAILED - XCODE LOG ===" && cat ios/Pods/build/*.log 2>/dev/null || true; exit 1)
 
       - name: Package IPA
         run: |
-          cd mobile_app/build/ios/iphoneos
+          # Buscar Runner.app en las posibles rutas de build
+          APP_PATH=""
+          for dir in "mobile_app/build/ios/iphoneos" "mobile_app/build/ios/Release-iphoneos" "mobile_app/build/ios/Debug-iphoneos"; do
+            if [ -d "$dir/Runner.app" ]; then
+              APP_PATH="$dir"
+              break
+            fi
+          done
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No se encontro Runner.app en ninguna ruta de build"
+            find mobile_app/build/ios -name "Runner.app" -type d 2>/dev/null || true
+            exit 1
+          fi
+          echo "Runner.app encontrado en: $APP_PATH"
+          cd "$APP_PATH"
           mkdir -p Payload
           cp -r Runner.app Payload/
-          zip -r ../../../../ios/Runner.ipa Payload
-          ls -la ../../../../ios/Runner.ipa
+          zip -r "$GITHUB_WORKSPACE/mobile_app/ios/Runner.ipa" Payload
+          ls -la "$GITHUB_WORKSPACE/mobile_app/ios/Runner.ipa"
 
       - name: Generate Build Info
         run: |
