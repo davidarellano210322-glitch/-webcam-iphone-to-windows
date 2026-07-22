@@ -1,6 +1,7 @@
 // ============================================================================
 // PANTALLA 1: CONFIGURACIÓN / CONEXIÓN (Setup Screen)
 // Visualizer teléfono ↔ laptop, anillos pulsantes, botones WiFi / USB
+// Campo de IP del servidor Windows + conexión funcional
 // ============================================================================
 
 import 'package:flutter/material.dart';
@@ -10,7 +11,7 @@ import '../widgets/custom_painters.dart';
 import '../widgets/neocamo_widgets.dart';
 
 class SetupScreen extends StatefulWidget {
-  final VoidCallback onConnect;
+  final void Function(String ip) onConnect;
   final bool cameraPermission;
   final bool micPermission;
   final bool networkPermission;
@@ -31,6 +32,8 @@ class _SetupScreenState extends State<SetupScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseRingCtrl;
   late AnimationController _bounceAntennaCtrl;
+  final TextEditingController _ipController = TextEditingController();
+  bool _isConnecting = false;
 
   @override
   void initState() {
@@ -49,20 +52,43 @@ class _SetupScreenState extends State<SetupScreen>
   void dispose() {
     _pulseRingCtrl.dispose();
     _bounceAntennaCtrl.dispose();
+    _ipController.dispose();
     super.dispose();
+  }
+
+  void _handleConnect() {
+    final ip = _ipController.text.trim();
+    if (ip.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Introduce la IP de tu PC'),
+          backgroundColor: NC.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    HapticFeedback.mediumImpact();
+    setState(() => _isConnecting = true);
+
+    // Simular delay de conexión para feedback visual
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        setState(() => _isConnecting = false);
+        widget.onConnect(ip);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // Fondo con grid
         Positioned.fill(child: CustomPaint(painter: GridBackgroundPainter())),
-        // Scanlines
         Positioned.fill(
           child: CustomPaint(painter: ScanlinePainter(opacity: 0.03)),
         ),
-
         SafeArea(
           child: Column(
             children: [
@@ -80,6 +106,8 @@ class _SetupScreenState extends State<SetupScreen>
                       const SizedBox(height: 12),
                       _buildInstructions(),
                       const SizedBox(height: 24),
+                      _buildIpInput(),
+                      const SizedBox(height: 16),
                       _buildConnectionButtons(),
                       const SizedBox(height: 20),
                     ],
@@ -94,7 +122,6 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── TOP APP BAR ─────────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -127,18 +154,14 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── VISUALIZADOR DE CONEXIÓN ────────────────────────────────────────────
   Widget _buildConnectionVisualizer() {
     return SizedBox(
-      height: 260,
+      height: 220,
       width: double.infinity,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // Anillos pulsantes
           PulseRingsWidget(animation: _pulseRingCtrl),
-
-          // Teléfono
           Transform.translate(
             offset: const Offset(-45, 0),
             child: Transform.rotate(
@@ -146,14 +169,10 @@ class _SetupScreenState extends State<SetupScreen>
               child: _buildPhoneGraphic(),
             ),
           ),
-
-          // Laptop
           Transform.translate(
             offset: const Offset(45, 25),
             child: _buildLaptopGraphic(),
           ),
-
-          // Antena animada
           AnimatedBuilder(
             animation: _bounceAntennaCtrl,
             builder: (context, child) {
@@ -266,7 +285,7 @@ class _SetupScreenState extends State<SetupScreen>
                         ],
                       ),
                       const Text(
-                        'NEOCAMO_STUDIO_V2.1',
+                        'NEOCAMO_STUDIO',
                         style: TextStyle(
                           fontFamily: 'Geist',
                           fontSize: 7,
@@ -301,7 +320,6 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── TÍTULO ──────────────────────────────────────────────────────────────
   Widget _buildTitle() {
     return Column(
       children: [
@@ -318,7 +336,7 @@ class _SetupScreenState extends State<SetupScreen>
         Text(
           'Conecta tu iPhone a tu PC y empieza a transmitir video profesional.',
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontFamily: 'Inter',
             fontSize: 13,
             color: NC.onSurfaceVariant,
@@ -328,7 +346,6 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── INSTRUCCIONES ───────────────────────────────────────────────────────
   Widget _buildInstructions() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -339,15 +356,11 @@ class _SetupScreenState extends State<SetupScreen>
       ),
       child: Column(
         children: [
-          _buildInstructionStep(
-            '1',
-            'Abre NeoCamo Studio en tu computadora.',
-          ),
+          _buildInstructionStep('1', 'Ejecuta server.py en tu PC Windows.'),
           const SizedBox(height: 12),
-          _buildInstructionStep(
-            '2',
-            'Conecta vía cable USB o usa WiFi para libertad inalámbrica.',
-          ),
+          _buildInstructionStep('2', 'Introduce la IP que muestra el servidor.'),
+          const SizedBox(height: 12),
+          _buildInstructionStep('3', 'Presiona Conectar y comienza a transmitir.'),
         ],
       ),
     );
@@ -390,7 +403,50 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── BOTONES DE CONEXIÓN ─────────────────────────────────────────────────
+  Widget _buildIpInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'IP DEL SERVIDOR',
+          style: TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: NC.primary,
+            letterSpacing: 2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _ipController,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 16,
+            color: NC.onSurface,
+          ),
+          decoration: InputDecoration(
+            hintText: '192.168.1.100',
+            hintStyle: const TextStyle(color: Colors.white24),
+            prefixIcon: const Icon(Icons.computer, color: NC.primary, size: 20),
+            filled: true,
+            fillColor: NC.surfaceContainerLow,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: NC.white10),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: NC.primary, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildConnectionButtons() {
     return Column(
       children: [
@@ -405,14 +461,20 @@ class _SetupScreenState extends State<SetupScreen>
             elevation: 10,
             shadowColor: NC.primaryGlow,
           ),
-          onPressed: () {
-            HapticFeedback.mediumImpact();
-            widget.onConnect();
-          },
-          icon: const Icon(Icons.wifi, size: 22),
-          label: const Text(
-            'Conectar por WiFi (Auto-Discovery)',
-            style: TextStyle(
+          onPressed: _isConnecting ? null : _handleConnect,
+          icon: _isConnecting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: NC.onPrimary,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Icon(Icons.wifi, size: 22),
+          label: Text(
+            _isConnecting ? 'Conectando...' : 'Conectar por WiFi',
+            style: const TextStyle(
               fontFamily: 'Hanken Grotesk',
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -430,10 +492,7 @@ class _SetupScreenState extends State<SetupScreen>
               borderRadius: BorderRadius.circular(14),
             ),
           ),
-          onPressed: () {
-            HapticFeedback.mediumImpact();
-            widget.onConnect();
-          },
+          onPressed: _isConnecting ? null : _handleConnect,
           icon: const Icon(Icons.usb, color: NC.primary, size: 22),
           label: const Text(
             'Modo Prioridad USB',
@@ -461,7 +520,6 @@ class _SetupScreenState extends State<SetupScreen>
     );
   }
 
-  // ─── FOOTER (BADGES DE PERMISOS + VERSIÓN) ──────────────────────────────
   Widget _buildFooter() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -521,17 +579,22 @@ class _SetupScreenState extends State<SetupScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
             Text(
-              '1. Asegúrate de que NeoCamo Studio esté abierto en tu PC.',
+              '1. Asegúrate de que server.py esté ejecutándose en tu PC.',
               style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
             ),
             SizedBox(height: 8),
             Text(
-              '2. Si usas cable USB en iPhone, presiona "Confiar en esta computadora".',
+              '2. Verifica que tu iPhone y tu PC estén en el mismo WiFi.',
               style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
             ),
             SizedBox(height: 8),
             Text(
-              '3. Verifica que el puerto 8000 esté abierto en el firewall de Windows.',
+              '3. Verifica que el puerto 8000 esté abierto en el firewall.',
+              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '4. Si usas cable USB, presiona "Confiar en esta computadora".',
               style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
             ),
           ],

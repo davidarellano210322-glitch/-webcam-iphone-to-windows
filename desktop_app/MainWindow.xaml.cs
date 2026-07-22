@@ -489,7 +489,7 @@ namespace desktop_app
                         int outWidth, outHeight;
                         byte[] processedFrame = ApplyFrameProcessing(frameBuffer, width, height, out outWidth, out outHeight);
 
-                        _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame, _isMirrorActive);
+                        _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame);
 
                         // Feed the recorder if active
                         if (_isRecording && _ffmpegRecorderStdin != null && outWidth == _recordWidth && outHeight == _recordHeight)

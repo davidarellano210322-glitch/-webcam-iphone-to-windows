@@ -1,23 +1,33 @@
 // ============================================================================
 // PANTALLA 4: AJUSTES GENERALES (Settings Screen)
-// Configuración de streaming, info de dispositivo, diagnóstico, versión
+// Configuración de streaming, IP del servidor, info de dispositivo, diagnóstico
 // ============================================================================
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme.dart';
+import '../services/telemetry_service.dart';
 
 class SettingsScreen extends StatefulWidget {
+  final TelemetryService telemetry;
+  final String serverIp;
+  final void Function(String ip) onServerIpChanged;
   final VoidCallback onBack;
 
-  const SettingsScreen({super.key, required this.onBack});
+  const SettingsScreen({
+    super.key,
+    required this.telemetry,
+    required this.serverIp,
+    required this.onServerIpChanged,
+    required this.onBack,
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Opciones de configuración (mock, estado local)
+  late TextEditingController _ipController;
   String _selectedCodec = 'H.264';
   double _bitrateTarget = 8.5;
   bool _autoReconnect = true;
@@ -25,6 +35,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _sendAudio = true;
   bool _sendBattery = true;
   String _deviceName = 'iPhone de David';
+
+  @override
+  void initState() {
+    super.initState();
+    _ipController = TextEditingController(text: widget.serverIp);
+  }
+
+  @override
+  void dispose() {
+    _ipController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +76,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // ─── SECCIÓN: TRANSMISIÓN ────────────────────────────────────────
+            // ─── SERVIDOR ──────────────────────────────────────────────────
+            _buildSectionTitle('SERVIDOR'),
+            const SizedBox(height: 12),
+            _buildCard([
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'IP del servidor Windows',
+                      style: TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 13,
+                        color: NC.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _ipController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 16,
+                        color: NC.onSurface,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: '192.168.1.100',
+                        hintStyle: const TextStyle(color: Colors.white24),
+                        prefixIcon: const Icon(Icons.computer, color: NC.primary, size: 20),
+                        filled: true,
+                        fillColor: NC.surfaceContainerLow,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: NC.white10),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: NC.primary, width: 2),
+                        ),
+                      ),
+                      onSubmitted: (value) {
+                        widget.onServerIpChanged(value.trim());
+                        HapticFeedback.lightImpact();
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: NC.primary,
+                        foregroundColor: NC.onPrimary,
+                        minimumSize: const Size(double.infinity, 40),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        elevation: 0,
+                      ),
+                      onPressed: () {
+                        widget.onServerIpChanged(_ipController.text.trim());
+                        HapticFeedback.lightImpact();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('IP guardada'),
+                            backgroundColor: NC.primary,
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      child: const Text('Guardar IP'),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+            const SizedBox(height: 24),
+
+            // ─── TRANSMISIÓN ──────────────────────────────────────────────
             _buildSectionTitle('TRANSMISIÓN'),
             const SizedBox(height: 12),
             _buildCard([
@@ -92,7 +188,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
             const SizedBox(height: 24),
 
-            // ─── SECCIÓN: AUDIO Y BATERÍA ────────────────────────────────────
+            // ─── AUDIO Y BATERÍA ──────────────────────────────────────────
             _buildSectionTitle('AUDIO Y ENERGÍA'),
             const SizedBox(height: 12),
             _buildCard([
@@ -112,7 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
             const SizedBox(height: 24),
 
-            // ─── SECCIÓN: DISPOSITIVO ────────────────────────────────────────
+            // ─── DISPOSITIVO ──────────────────────────────────────────────
             _buildSectionTitle('DISPOSITIVO'),
             const SizedBox(height: 12),
             _buildCard([
@@ -123,13 +219,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => _showEditDeviceNameDialog(),
               ),
               _buildDivider(),
-              _buildInfoRow('Modelo', 'iPhone 15 Pro', Icons.smartphone),
+              _buildInfoRow('Modelo', 'iPhone', Icons.smartphone),
               _buildDivider(),
-              _buildInfoRow('Sistema', 'iOS 17.4.1', Icons.system_update),
+              _buildInfoRow('Sistema', 'iOS', Icons.system_update),
             ]),
             const SizedBox(height: 24),
 
-            // ─── SECCIÓN: DIAGNÓSTICO ────────────────────────────────────────
+            // ─── DIAGNÓSTICO ──────────────────────────────────────────────
             _buildSectionTitle('DIAGNÓSTICO'),
             const SizedBox(height: 12),
             _buildCard([
@@ -143,30 +239,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               _buildDivider(),
               _buildActionRow(
-                'Ver logs de streaming',
-                Icons.description,
-                () {
-                  HapticFeedback.lightImpact();
-                },
-              ),
-              _buildDivider(),
-              _buildActionRow(
                 'Reiniciar servicio de cámara',
                 Icons.restart_alt,
                 () {
                   HapticFeedback.mediumImpact();
+                  _showRestartConfirmation();
                 },
               ),
             ]),
             const SizedBox(height: 24),
 
-            // ─── SECCIÓN: ACERCA DE ──────────────────────────────────────────
+            // ─── ACERCA DE ────────────────────────────────────────────────
             _buildSectionTitle('ACERCA DE'),
             const SizedBox(height: 12),
             _buildCard([
               _buildInfoRow('App', 'NeoCamo Monitor', Icons.apps),
               _buildDivider(),
-              _buildInfoRow('Versión', '2.5.0 (Build 4)', Icons.tag),
+              _buildInfoRow('Versión', '2.5.0', Icons.tag),
               _buildDivider(),
               _buildInfoRow('Desarrollador', 'Antigravity', Icons.code),
             ]),
@@ -198,57 +287,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: NC.surfaceContainer,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: NC.white10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: NC.white05),
       ),
       child: Column(children: children),
     );
   }
 
-  Widget _buildDivider() => const Divider(
-        color: NC.white10,
-        height: 1,
-        thickness: 0.5,
-        indent: 16,
-        endIndent: 16,
-      );
+  Widget _buildDivider() {
+    return const Divider(height: 1, color: NC.white10, indent: 16, endIndent: 16);
+  }
 
   Widget _buildDropdownRow(
-    String label,
-    String value,
-    List<String> options,
-    IconData icon,
-    ValueChanged<String?> onChanged,
-  ) {
+    String label, String value, List<String> items, IconData icon, ValueChanged<String?> onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          Icon(icon, color: NC.onSurfaceVariant, size: 20),
+          Icon(icon, color: NC.primary, size: 20),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 14,
-                color: NC.onSurface,
-              ),
-            ),
-          ),
+          Expanded(child: Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface))),
           DropdownButton<String>(
             value: value,
-            underline: const SizedBox(),
-            dropdownColor: NC.surfaceContainer,
-            style: const TextStyle(
-              fontFamily: 'Geist',
-              fontSize: 13,
-              color: NC.primary,
-            ),
-            items: options
-                .map((o) => DropdownMenuItem(value: o, child: Text(o)))
-                .toList(),
+            items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontFamily: 'Geist', fontSize: 13, color: NC.primary)))).toList(),
             onChanged: onChanged,
+            dropdownColor: NC.surfaceContainerHigh,
+            underline: const SizedBox(),
           ),
         ],
       ),
@@ -256,96 +320,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSliderRow(
-    String label,
-    double value,
-    double min,
-    double max,
-    String suffix,
-    IconData icon,
-    ValueChanged<double> onChanged,
-  ) {
+    String label, double value, double min, double max, String suffix, IconData icon, ValueChanged<double> onChanged) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(icon, color: NC.onSurfaceVariant, size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 14,
-                    color: NC.onSurface,
-                  ),
-                ),
-              ),
-              Text(
-                '${value.toStringAsFixed(1)}$suffix',
-                style: const TextStyle(
-                  fontFamily: 'Geist',
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: NC.primary,
-                ),
-              ),
-            ],
-          ),
-          SliderTheme(
-            data: SliderThemeData(
-              activeTrackColor: NC.primary,
-              inactiveTrackColor: NC.white10,
-              thumbColor: NC.primary,
-              overlayColor: NC.primaryGlow,
-              trackHeight: 3,
-            ),
-            child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              divisions: 19,
-              onChanged: onChanged,
-            ),
-          ),
+          Row(children: [
+            Icon(icon, color: NC.primary, size: 20),
+            const SizedBox(width: 12),
+            Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface)),
+            const Spacer(),
+            Text('${value.toStringAsFixed(1)}$suffix', style: const TextStyle(fontFamily: 'Geist', fontSize: 12, color: NC.primary)),
+          ]),
+          Slider(value: value, min: min, max: max, divisions: 20, activeColor: NC.primary, inactiveColor: NC.white10, onChanged: onChanged),
         ],
       ),
     );
   }
 
-  Widget _buildSwitchRow(
-    String label,
-    bool value,
-    IconData icon,
-    ValueChanged<bool> onChanged,
-  ) {
+  Widget _buildSwitchRow(String label, bool value, IconData icon, ValueChanged<bool> onChanged) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         children: [
-          Icon(icon, color: NC.onSurfaceVariant, size: 20),
+          Icon(icon, color: NC.primary, size: 20),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 14,
-                color: NC.onSurface,
-              ),
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: (v) {
-              HapticFeedback.selectionClick();
-              onChanged(v);
-            },
-            activeColor: NC.primary,
-            activeTrackColor: NC.primaryGlow,
-          ),
+          Expanded(child: Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface))),
+          Switch(value: value, activeColor: NC.primary, onChanged: onChanged),
         ],
       ),
     );
@@ -353,67 +355,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildInfoRow(String label, String value, IconData icon) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [
-          Icon(icon, color: NC.onSurfaceVariant, size: 20),
+          Icon(icon, color: NC.primary, size: 20),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 14,
-                color: NC.onSurface,
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontFamily: 'Geist',
-              fontSize: 13,
-              color: NC.onSurfaceVariant,
-            ),
-          ),
+          Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface)),
+          const Spacer(),
+          Text(value, style: const TextStyle(fontFamily: 'Geist', fontSize: 13, color: NC.onSurfaceVariant)),
         ],
       ),
     );
   }
 
-  Widget _buildTextRow(
-    String label,
-    String value,
-    IconData icon, {
-    VoidCallback? onTap,
-  }) {
+  Widget _buildTextRow(String label, String value, IconData icon, {VoidCallback? onTap}) {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            Icon(icon, color: NC.onSurfaceVariant, size: 20),
+            Icon(icon, color: NC.primary, size: 20),
             const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 14,
-                  color: NC.onSurface,
-                ),
-              ),
-            ),
-            Text(
-              value,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                color: NC.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface)),
+            const Spacer(),
+            Text(value, style: const TextStyle(fontFamily: 'Geist', fontSize: 13, color: NC.primary)),
+            const SizedBox(width: 4),
             const Icon(Icons.chevron_right, color: NC.onSurfaceVariant, size: 18),
           ],
         ),
@@ -421,29 +388,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildActionRow(
-    String label,
-    IconData icon,
-    VoidCallback onTap,
-  ) {
+  Widget _buildActionRow(String label, IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
             Icon(icon, color: NC.primary, size: 20),
             const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 14,
-                  color: NC.onSurface,
-                ),
-              ),
-            ),
+            Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface)),
+            const Spacer(),
             const Icon(Icons.chevron_right, color: NC.onSurfaceVariant, size: 18),
           ],
         ),
@@ -452,58 +407,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showEditDeviceNameDialog() {
-    final controller = TextEditingController(text: _deviceName);
+    final ctrl = TextEditingController(text: _deviceName);
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: NC.surfaceContainer,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: NC.white10),
-        ),
-        title: const Text(
-          'Nombre del dispositivo',
-          style: TextStyle(
-            fontFamily: 'Hanken Grotesk',
-            fontSize: 18,
-            color: NC.onSurface,
-          ),
-        ),
+        title: const Text('Nombre del dispositivo', style: TextStyle(color: NC.onSurface)),
         content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(
-            fontFamily: 'Inter',
-            color: NC.onSurface,
-          ),
+          controller: ctrl,
+          style: const TextStyle(color: NC.onSurface),
           decoration: InputDecoration(
-            hintText: 'Ej. iPhone de David',
-            hintStyle: TextStyle(color: NC.onSurfaceVariant),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: NC.white20),
-            ),
-            focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: NC.primary),
-            ),
+            filled: true,
+            fillColor: NC.surfaceContainerLow,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar',
-                style: TextStyle(color: NC.onSurfaceVariant)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar', style: TextStyle(color: NC.onSurfaceVariant))),
           TextButton(
             onPressed: () {
-              setState(() {
-                if (controller.text.isNotEmpty) {
-                  _deviceName = controller.text;
-                }
-              });
+              setState(() => _deviceName = ctrl.text.isEmpty ? 'iPhone' : ctrl.text);
               Navigator.pop(context);
             },
-            child: const Text('Guardar',
-                style: TextStyle(color: NC.primary, fontWeight: FontWeight.bold)),
+            child: const Text('Guardar', style: TextStyle(color: NC.primary)),
           ),
         ],
       ),
@@ -511,52 +437,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showDiagnosticResult() {
+    final state = widget.telemetry.state;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: NC.surfaceContainer,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: NC.white10),
-        ),
-        title: Row(
-          children: const [
-            Icon(Icons.check_circle, color: NC.primary),
-            SizedBox(width: 8),
-            Text(
-              'Diagnóstico completado',
-              style: TextStyle(
-                fontFamily: 'Hanken Grotesk',
-                fontSize: 18,
-                color: NC.onSurface,
-              ),
-            ),
-          ],
-        ),
-        content: const Column(
+        title: const Text('Diagnóstico de conexión', style: TextStyle(color: NC.onSurface)),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('✓ Permisos de cámara: OK',
-                style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant)),
-            SizedBox(height: 6),
-            Text('✓ Permisos de micrófono: OK',
-                style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant)),
-            SizedBox(height: 6),
-            Text('✓ Red local: OK',
-                style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant)),
-            SizedBox(height: 6),
-            Text('✓ Servicio de streaming: Activo',
-                style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant)),
+            _diagRow('Estado', state.isStreaming ? 'TRANSMITIENDO' : 'DESCONECTADO'),
+            _diagRow('Conexión', state.connectionStatus),
+            _diagRow('Latencia', '${state.latencyMs}ms'),
+            _diagRow('Bitrate', state.bitrate),
+            _diagRow('Resolución', state.resolution),
+            _diagRow('FPS', '${state.fps}'),
+            _diagRow('Batería', '${state.batteryPercent}%'),
+            _diagRow('Temperatura', '${state.thermalTemp.toInt()}°C'),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar',
-                style: TextStyle(color: NC.primary, fontWeight: FontWeight.bold)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar', style: TextStyle(color: NC.primary))),
         ],
+      ),
+    );
+  }
+
+  Widget _diagRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 13, color: NC.onSurfaceVariant)),
+          Text(value, style: const TextStyle(fontFamily: 'Geist', fontSize: 13, color: NC.primary)),
+        ],
+      ),
+    );
+  }
+
+  void _showRestartConfirmation() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Reiniciando servicio de cámara...'),
+        backgroundColor: NC.primary,
+        duration: Duration(seconds: 2),
       ),
     );
   }

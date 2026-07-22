@@ -1,6 +1,7 @@
 // ============================================================================
 // PANTALLA 2: MONITOR EN VIVO PROFESIONAL (Live Monitor Screen)
 // Vista previa de cámara real, telemetría, lens selector, vúmetros, batería
+// Botón principal: iniciar/detener STREAMING hacia el servidor Windows
 // ============================================================================
 
 import 'dart:math' as math;
@@ -42,6 +43,12 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
     super.initState();
     _state = widget.telemetry.state;
     widget.telemetry.onStateChanged = _onTelemetryChanged;
+  }
+
+  @override
+  void dispose() {
+    widget.telemetry.onStateChanged = null;
+    super.dispose();
   }
 
   void _onTelemetryChanged(TelemetryState newState) {
@@ -116,7 +123,6 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
   Widget _buildCameraPreview() {
     final ctrl = widget.cameraController;
     if (ctrl == null || !ctrl.value.isInitialized) {
-      // Placeholder sintético mientras no haya cámara
       return _buildCameraPlaceholder();
     }
     return ClipRect(
@@ -233,7 +239,6 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
               ),
             ],
           ),
-          // Telemetría resolución + bitrate
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
@@ -245,8 +250,7 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
               children: [
                 _buildTelemetryItem('RESOLUCIÓN', _state.resolution),
                 const SizedBox(width: 8),
-                Container(
-                    width: 1, height: 16, color: NC.white10),
+                Container(width: 1, height: 16, color: NC.white10),
                 const SizedBox(width: 8),
                 _buildTelemetryItem('BITRATE', _state.bitrate),
               ],
@@ -337,11 +341,11 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
                 color: NC.onSurfaceVariant),
             onPressed: () => widget.telemetry.switchCamera(),
           ),
-          // Botón REC / STREAM central
+          // Botón REC / STREAM central — controla el streaming hacia el PC
           RecordButton(
             isStreaming: _state.isStreaming,
             isRecording: _state.isRecording,
-            onTap: () => widget.telemetry.toggleRecording(),
+            onTap: () => widget.telemetry.toggleStreaming(),
             pulseAnimation: widget.recPulseAnimation,
           ),
           IconButton(

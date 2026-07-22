@@ -1,29 +1,6 @@
 // ============================================================================
 // NEOCAMO MONITOR - App Principal
-// Orquestador de pantallas, permisos, cámara y servicio de telemetría
-// ============================================================================
-//
-// ARQUITECTURA:
-//   lib/
-//   ├── main.dart              ← este archivo (orquestador)
-//   ├── theme.dart             ← paleta, tipografía, constantes
-//   ├── services/
-//   │   └── telemetry_service.dart  ← MethodChannel + estado
-//   ├── widgets/
-//   │   ├── neocamo_widgets.dart     ← GlassBadge, RecordButton, etc
-//   │   └── custom_painters.dart    ← Grid, Scanlines, Viewfinder
-//   └── screens/
-//       ├── setup_screen.dart        ← Pantalla 1: Conexión
-//       ├── live_monitor_screen.dart ← Pantalla 2: Monitor en vivo
-//       ├── tune_panel.dart          ← Pantalla 3: Ajustes de cámara (modal)
-//       └── settings_screen.dart     ← Pantalla 4: Ajustes generales
-//
-// INTEGRACIÓN NATIVA:
-//   - WebcamStreamer.swift expone MethodChannel 'com.antigravity.webcam/control'
-//   - Métodos existentes: startServer, stopServer, switchCamera, toggleFlash, setLens
-//   - Métodos NUEVOS requeridos (ver TODO al final):
-//     setZoom, setExposure, setISO, setWhiteBalance, setResolution, startRecording,
-//     stopRecording, getTelemetry
+// Orquestador de pantallas, permisos, cámara, streaming y telemetría
 // ============================================================================
 
 import 'package:camera/camera.dart';
@@ -55,9 +32,6 @@ void main() {
   runApp(const NeoCamoApp());
 }
 
-// ============================================================================
-// APP ROOT
-// ============================================================================
 class NeoCamoApp extends StatelessWidget {
   const NeoCamoApp({super.key});
 
@@ -82,9 +56,6 @@ class NeoCamoApp extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// PANTALLA PRINCIPAL - Orquestador con navegación
-// ============================================================================
 class NeoCamoMainScreen extends StatefulWidget {
   const NeoCamoMainScreen({super.key});
 
@@ -94,47 +65,43 @@ class NeoCamoMainScreen extends StatefulWidget {
 
 class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
     with TickerProviderStateMixin {
-  // Navegación: 0 = Setup, 1 = Monitor, 2 = Settings
   int _currentScreenIndex = 0;
 
-  // Servicio de telemetría (singleton)
   final TelemetryService _telemetry = TelemetryService.instance;
 
-  // Cámara Flutter (para vista previa real en el monitor)
   CameraController? _cameraController;
   bool _cameraInitialized = false;
   List<CameraDescription> _cameras = [];
 
-  // Permisos
   bool _cameraPermission = false;
   bool _micPermission = false;
   bool _networkPermission = false;
 
-  // Animaciones
+  // IP del servidor introducida por el usuario
+  String _serverIp = '';
+
   late AnimationController _recPulseCtrl;
 
   @override
   void initState() {
     super.initState();
 
-    // Controller para pulso del botón REC
     _recPulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
-    // Inicia mock de telemetría para desarrollo
     _telemetry.startMock();
-
-    // Solicita permisos al iniciar
     _requestPermissions();
   }
 
   @override
   void dispose() {
     _recPulseCtrl.dispose();
-    _cameraController?.dispose();
     _telemetry.stopMock();
+    // Detener streaming si está activo
+    _telemetry.setCameraController(null);
+    _cameraController?.dispose();
     super.dispose();
   }
 
@@ -146,12 +113,9 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
     setState(() {
       _cameraPermission = cameraStatus.isGranted;
       _micPermission = micStatus.isGranted;
-      // En iOS el permiso de red local se solicita al iniciar el servidor,
-      // asumimos true por ahora; se actualizará cuando se conecte.
       _networkPermission = true;
     });
 
-    // Si tenemos permiso de cámara, inicializa CameraController
     if (_cameraPermission) {
       await _initCamera();
     }
@@ -170,19 +134,28 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       );
 
       await _cameraController!.initialize();
+
+      // Registrar el controller en el servicio de telemetría para streaming
+      _telemetry.setCameraController(_cameraController);
+
       if (mounted) setState(() => _cameraInitialized = true);
     } catch (e) {
       debugPrint('Error inicializando cámara: $e');
     }
   }
 
+  // ─── CONFIGURACIÓN DEL SERVIDOR ──────────────────────────────────────────
+  void _setServerIp(String ip) {
+    _serverIp = ip;
+    _telemetry.setServerConfig(ip);
+  }
+
   // ─── NAVEGACIÓN ───────────────────────────────────────────────────────────
   void _goToMonitor() {
     HapticFeedback.mediumImpact();
-    // Re-solicita permisos si no los tenemos
     if (!_cameraPermission || !_micPermission) {
       _requestPermissions().then((_) {
-        setState(() => _currentScreenIndex = 1);
+        if (mounted) setState(() => _currentScreenIndex = 1);
       });
     } else {
       setState(() => _currentScreenIndex = 1);
@@ -200,11 +173,12 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   }
 
   void _openTunePanel(BuildContext context) {
+    HapticFeedback.lightImpact();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => TunePanel(
+      builder: (context) => TunePanel(
         telemetry: _telemetry,
         state: _telemetry.state,
       ),
@@ -215,10 +189,9 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 400),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
+      body: GestureDetector(
+        // Previene que los gestos del sistema afecten la UI
+        behavior: HitTestBehavior.opaque,
         child: _buildCurrentScreen(),
       ),
     );
@@ -229,7 +202,10 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       case 0:
         return SetupScreen(
           key: const ValueKey('SetupScreen'),
-          onConnect: _goToMonitor,
+          onConnect: (String ip) {
+            _setServerIp(ip);
+            _goToMonitor();
+          },
           cameraPermission: _cameraPermission,
           micPermission: _micPermission,
           networkPermission: _networkPermission,
@@ -247,11 +223,17 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       case 2:
         return SettingsScreen(
           key: const ValueKey('SettingsScreen'),
+          telemetry: _telemetry,
+          serverIp: _serverIp,
+          onServerIpChanged: _setServerIp,
           onBack: () => setState(() => _currentScreenIndex = 1),
         );
       default:
         return SetupScreen(
-          onConnect: _goToMonitor,
+          onConnect: (String ip) {
+            _setServerIp(ip);
+            _goToMonitor();
+          },
           cameraPermission: _cameraPermission,
           micPermission: _micPermission,
           networkPermission: _networkPermission,
@@ -259,85 +241,3 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
     }
   }
 }
-
-// ============================================================================
-// TODO: MÉTODOS SWIFT REQUERIDOS PARA COMPLETAR LA INTEGRACIÓN
-// ============================================================================
-//
-// Para que la telemetría y los controles avanzados funcionen completamente,
-// agrega estos métodos al método `handle(_ call: FlutterMethodCall)` en:
-//
-//   mobile_app/ios/Runner/AppDelegate.swift
-//
-// (o donde tengas registrado el MethodChannel 'com.antigravity.webcam/control')
-//
-// Casos a agregar:
-//
-// case "setZoom":
-//     let zoom = call.arguments["zoom"] as! Double
-//     WebcamStreamer.shared.setZoom(zoom)
-//     result(nil)
-//
-// case "setExposure":
-//     let value = call.arguments["value"] as! Double
-//     WebcamStreamer.shared.setExposure(value)
-//     result(nil)
-//
-// case "setISO":
-//     let iso = call.arguments["iso"] as! Double
-//     WebcamStreamer.shared.setISO(iso)
-//     result(nil)
-//
-// case "setWhiteBalance":
-//     let kelvin = call.arguments["kelvin"] as! Double
-//     WebcamStreamer.shared.setWhiteBalance(kelvin)
-//     result(nil)
-//
-// case "setResolution":
-//     let width = call.arguments["width"] as! Int
-//     let fps = call.arguments["fps"] as! Int
-//     WebcamStreamer.shared.setResolution(width: width, fps: fps)
-//     result(nil)
-//
-// case "startRecording":
-//     WebcamStreamer.shared.startRecording()
-//     result(nil)
-//
-// case "stopRecording":
-//     WebcamStreamer.shared.stopRecording()
-//     result(nil)
-//
-// case "getTelemetry":
-//     let telemetry = WebcamStreamer.shared.getTelemetry()
-//     result(telemetry)  // Dict con: battery, thermal, bitrate, latency, fps
-//
-// Y en WebcamStreamer.swift, implementa las funciones correspondientes:
-//
-// func setZoom(_ zoom: Double) {
-//     guard let device = captureDevice else { return }
-//     try? device.lockForConfiguration()
-//     device.videoZoomFactor = zoom
-//     device.unlockForConfiguration()
-// }
-//
-// func setExposure(_ value: Double) {
-//     guard let device = captureDevice else { return }
-//     try? device.lockForConfiguration()
-//     device.setExposureTargetBias(value, completionHandler: nil)
-//     device.unlockForConfiguration()
-// }
-//
-// func setISO(_ iso: Double) {
-//     guard let device = captureDevice else { return }
-//     try? device.lockForConfiguration()
-//     device.setExposureModeCustom(duration: AVCaptureExposureDuration.current,
-//                                  iso: iso, completionHandler: nil)
-//     device.unlockForConfiguration()
-// }
-//
-// func setWhiteBalance(_ kelvin: Double) {
-//     // Convierte Kelvin a RGB gains y aplica
-//     // (requiere implementación manual de la conversión K→RGB)
-// }
-//
-// ============================================================================

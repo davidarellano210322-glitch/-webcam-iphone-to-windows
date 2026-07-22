@@ -165,7 +165,7 @@ if __name__ == '__main__':
     print("  Instrucciones para iPhone y iOS (WiFi seguro):")
     print("  1. Asegúrate de que tu iPhone esté en el mismo WiFi que la PC.")
     print("  2. Abre este enlace en el navegador Safari de tu iPhone:")
-    print(f"\n     👉 https://{ip}:{port}\n")
+    print(f"\n     -> https://{ip}:{port}\n")
     print("  3. ALERTA DE SEGURIDAD EN IPHONE:")
     print("     Verás un aviso de 'Sitio no seguro' (es normal por ser certificado local).")
     print("     Toca en 'Mostrar Detalles' o 'Opciones Avanzadas'")
