@@ -238,7 +238,7 @@ class _SetupScreenState extends State<SetupScreen>
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: NC.white10),
         boxShadow: const [
-          BoxShadow(color: Colors.black80, blurRadius: 25, offset: Offset(0, 12))
+          BoxShadow(color: Colors.black87, blurRadius: 25, offset: Offset(0, 12))
         ],
       ),
       child: Column(

@@ -64,7 +64,7 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.black54, Colors.transparent, Colors.black80],
+                colors: [Colors.black54, Colors.transparent, Colors.black87],
               ),
             ),
           ),
