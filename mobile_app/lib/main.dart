@@ -1,6 +1,13 @@
 // ============================================================================
 // NEOCAMO MONITOR - App Principal
-// Orquestador de pantallas, permisos, cámara, streaming y telemetría
+// Orquestador de pantallas, permisos, cámara y servicio de telemetría
+//
+// ARQUITECTURA ORIGINAL (RESTAURADA):
+//   App Flutter → MethodChannel → WebcamStreamer.swift (TCP 6000/6001)
+//   → app de escritorio C# detecta iPhone por USB automáticamente
+//   → recibe H.264 → FFmpeg → cámara virtual DirectShow
+//
+//   NO requiere server.py, NI WebSocket, NI IP manual
 // ============================================================================
 
 import 'package:camera/camera.dart';
@@ -77,9 +84,6 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   bool _micPermission = false;
   bool _networkPermission = false;
 
-  // IP del servidor (opcional, se auto-descubre si está vacía)
-  String? _serverIp;
-
   late AnimationController _recPulseCtrl;
 
   @override
@@ -99,8 +103,6 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   void dispose() {
     _recPulseCtrl.dispose();
     _telemetry.stopMock();
-    // Detener streaming si está activo
-    _telemetry.setCameraController(null);
     _cameraController?.dispose();
     super.dispose();
   }
@@ -135,19 +137,10 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
 
       await _cameraController!.initialize();
 
-      // Registrar el controller en el servicio de telemetría para streaming
-      _telemetry.setCameraController(_cameraController);
-
       if (mounted) setState(() => _cameraInitialized = true);
     } catch (e) {
       debugPrint('Error inicializando cámara: $e');
     }
-  }
-
-  // ─── CONFIGURACIÓN DEL SERVIDOR ──────────────────────────────────────────
-  void _setServerIp(String? ip) {
-    _serverIp = (ip != null && ip.isNotEmpty) ? ip : null;
-    _telemetry.setServerConfig(ip ?? '');
   }
 
   // ─── NAVEGACIÓN ───────────────────────────────────────────────────────────
@@ -189,11 +182,7 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: GestureDetector(
-        // Previene que los gestos del sistema afecten la UI
-        behavior: HitTestBehavior.opaque,
-        child: _buildCurrentScreen(),
-      ),
+      body: _buildCurrentScreen(),
     );
   }
 
@@ -202,10 +191,7 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       case 0:
         return SetupScreen(
           key: const ValueKey('SetupScreen'),
-          onConnect: (String? ip) {
-            _setServerIp(ip);
-            _goToMonitor();
-          },
+          onConnect: _goToMonitor,
           cameraPermission: _cameraPermission,
           micPermission: _micPermission,
           networkPermission: _networkPermission,
@@ -224,16 +210,11 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
         return SettingsScreen(
           key: const ValueKey('SettingsScreen'),
           telemetry: _telemetry,
-          serverIp: _serverIp ?? '',
-          onServerIpChanged: (ip) => _setServerIp(ip),
           onBack: () => setState(() => _currentScreenIndex = 1),
         );
       default:
         return SetupScreen(
-          onConnect: (String? ip) {
-            _setServerIp(ip);
-            _goToMonitor();
-          },
+          onConnect: _goToMonitor,
           cameraPermission: _cameraPermission,
           micPermission: _micPermission,
           networkPermission: _networkPermission,

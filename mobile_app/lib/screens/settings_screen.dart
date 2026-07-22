@@ -10,15 +10,11 @@ import '../services/telemetry_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final TelemetryService telemetry;
-  final String serverIp;
-  final void Function(String ip) onServerIpChanged;
   final VoidCallback onBack;
 
   const SettingsScreen({
     super.key,
     required this.telemetry,
-    required this.serverIp,
-    required this.onServerIpChanged,
     required this.onBack,
   });
 
@@ -27,7 +23,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late TextEditingController _ipController;
   String _selectedCodec = 'H.264';
   double _bitrateTarget = 8.5;
   bool _autoReconnect = true;
@@ -37,14 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _deviceName = 'iPhone de David';
 
   @override
-  void initState() {
-    super.initState();
-    _ipController = TextEditingController(text: widget.serverIp);
-  }
-
-  @override
   void dispose() {
-    _ipController.dispose();
     super.dispose();
   }
 
@@ -76,80 +64,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // ─── SERVIDOR ──────────────────────────────────────────────────
-            _buildSectionTitle('SERVIDOR'),
-            const SizedBox(height: 12),
-            _buildCard([
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'IP del servidor Windows',
-                      style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: 13,
-                        color: NC.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _ipController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        fontFamily: 'Geist',
-                        fontSize: 16,
-                        color: NC.onSurface,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: '192.168.1.100',
-                        hintStyle: const TextStyle(color: Colors.white24),
-                        prefixIcon: const Icon(Icons.computer, color: NC.primary, size: 20),
-                        filled: true,
-                        fillColor: NC.surfaceContainerLow,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: NC.white10),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: NC.primary, width: 2),
-                        ),
-                      ),
-                      onSubmitted: (value) {
-                        widget.onServerIpChanged(value.trim());
-                        HapticFeedback.lightImpact();
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: NC.primary,
-                        foregroundColor: NC.onPrimary,
-                        minimumSize: const Size(double.infinity, 40),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        elevation: 0,
-                      ),
-                      onPressed: () {
-                        widget.onServerIpChanged(_ipController.text.trim());
-                        HapticFeedback.lightImpact();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('IP guardada'),
-                            backgroundColor: NC.primary,
-                            duration: Duration(seconds: 1),
-                          ),
-                        );
-                      },
-                      child: const Text('Guardar IP'),
-                    ),
-                  ],
-                ),
-              ),
-            ]),
-            const SizedBox(height: 24),
-
             // ─── TRANSMISIÓN ──────────────────────────────────────────────
             _buildSectionTitle('TRANSMISIÓN'),
             const SizedBox(height: 12),

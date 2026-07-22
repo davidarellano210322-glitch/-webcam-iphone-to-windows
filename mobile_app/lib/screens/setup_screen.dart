@@ -11,7 +11,7 @@ import '../widgets/custom_painters.dart';
 import '../widgets/neocamo_widgets.dart';
 
 class SetupScreen extends StatefulWidget {
-  final void Function(String? ip) onConnect;
+  final VoidCallback onConnect;
   final bool cameraPermission;
   final bool micPermission;
   final bool networkPermission;
@@ -32,7 +32,6 @@ class _SetupScreenState extends State<SetupScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseRingCtrl;
   late AnimationController _bounceAntennaCtrl;
-  final TextEditingController _ipController = TextEditingController();
   bool _isConnecting = false;
 
   @override
@@ -52,7 +51,6 @@ class _SetupScreenState extends State<SetupScreen>
   void dispose() {
     _pulseRingCtrl.dispose();
     _bounceAntennaCtrl.dispose();
-    _ipController.dispose();
     super.dispose();
   }
 
@@ -60,13 +58,10 @@ class _SetupScreenState extends State<SetupScreen>
     HapticFeedback.mediumImpact();
     setState(() => _isConnecting = true);
 
-    // Si hay IP manual, usarla. Si no, auto-descubrimiento (null)
-    final ip = _ipController.text.trim().isEmpty ? null : _ipController.text.trim();
-
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         setState(() => _isConnecting = false);
-        widget.onConnect(ip);
+        widget.onConnect();
       }
     });
   }
@@ -96,8 +91,6 @@ class _SetupScreenState extends State<SetupScreen>
                       const SizedBox(height: 12),
                       _buildInstructions(),
                       const SizedBox(height: 24),
-                      _buildIpInput(),
-                      const SizedBox(height: 16),
                       _buildConnectionButtons(),
                       const SizedBox(height: 20),
                     ],
@@ -346,11 +339,11 @@ class _SetupScreenState extends State<SetupScreen>
       ),
       child: Column(
         children: [
-          _buildInstructionStep('1', 'Ejecuta server.py en tu PC Windows.'),
+          _buildInstructionStep('1', 'Conecta tu iPhone por cable USB a tu PC.'),
           const SizedBox(height: 12),
-          _buildInstructionStep('2', 'Presiona Conectar. La IP se detecta automaticamente!'),
+          _buildInstructionStep('2', 'Abre la app de escritorio NeoCamo Studio.'),
           const SizedBox(height: 12),
-          _buildInstructionStep('3', 'Opcional: introduce la IP manualmente si falla el auto.'),
+          _buildInstructionStep('3', 'Presiona Conectar y luego el boton REC.'),
         ],
       ),
     );
@@ -387,71 +380,6 @@ class _SetupScreenState extends State<SetupScreen>
               fontSize: 13,
               color: NC.onSurfaceVariant,
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIpInput() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Text(
-              'IP DEL SERVIDOR (OPCIONAL)',
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: NC.primary,
-                letterSpacing: 2,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: NC.primary.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'AUTO',
-                style: TextStyle(
-                  fontFamily: 'Geist',
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold,
-                  color: NC.primary,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _ipController,
-          keyboardType: TextInputType.number,
-          style: const TextStyle(
-            fontFamily: 'Geist',
-            fontSize: 16,
-            color: NC.onSurface,
-          ),
-          decoration: InputDecoration(
-            hintText: '192.168.1.100',
-            hintStyle: const TextStyle(color: Colors.white24),
-            prefixIcon: const Icon(Icons.computer, color: NC.primary, size: 20),
-            filled: true,
-            fillColor: NC.surfaceContainerLow,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: NC.white10),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: NC.primary, width: 2),
-            ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           ),
         ),
       ],

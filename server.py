@@ -6,14 +6,9 @@ import pyvirtualcam
 import os
 import sys
 import ssl
-import asyncio
-import struct
 
 routes = web.RouteTableDef()
 cam = None
-
-# Variable global para almacenar la IP local
-LOCAL_IP = '127.0.0.1'
 
 @routes.get('/')
 async def handle_index(request):
@@ -25,45 +20,22 @@ async def handle_index(request):
     except Exception as e:
         return web.Response(text=f"Error leyendo index.html: {e}", status=500)
 
-@routes.get('/info')
-async def handle_info(request):
-    """Endpoint que devuelve la info del servidor para la app Flutter"""
-    return web.json_response({
-        'server': 'NeoCamo Studio',
-        'version': '2.5.0',
-        'ip': LOCAL_IP,
-        'port': 8000,
-        'status': 'ready'
-    })
-
 @routes.get('/ws')
 async def handle_ws(request):
     global cam
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    print("\n[+] Celular conectado a la transmision de video.")
+    print("\n[+] Celular conectado a la transmisión de video.")
 
     async for msg in ws:
         if msg.type == web.WSMsgType.BINARY:
             try:
-                # Decodificar la imagen recibida en binario
+                # Decodificar la imagen JPEG recibida en binario
                 data = msg.data
                 nparr = np.frombuffer(data, np.uint8)
-                
-                # Intentar decodificar como JPEG primero
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if img is None:
-                    # Si no es JPEG, intentar como BGRA crudo
-                    # Calcular dimensiones asumiendo aspecto 16:9
-                    total_pixels = len(data) // 4
-                    if total_pixels > 0:
-                        h = int((total_pixels * 9 / 16) ** 0.5)
-                        w = total_pixels // h if h > 0 else 0
-                        if w > 0 and h > 0:
-                            img = np.frombuffer(data, np.uint8).reshape((h, w, 4))
-                            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-                    if img is None:
-                        continue
+                    continue
 
                 # Convertir de BGR (formato de OpenCV) a RGB (esperado por pyvirtualcam)
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -84,13 +56,13 @@ async def handle_ws(request):
                 if cam is not None:
                     # Enviar el frame a la cámara virtual de Windows
                     cam.send(img_rgb)
-                    sys.stdout.write(f"\rStreaming a webcam virtual: {w}x{h} px | {len(data)} bytes/frame   ")
+                    sys.stdout.write(f"\rStreaming a webcam virtual: {w}x{h} px | Recibiendo bytes... ")
                     sys.stdout.flush()
 
             except Exception as e:
                 print(f"\n[-] Error procesando frame: {e}")
         elif msg.type == web.WSMsgType.ERROR:
-            print(f"\n[-] Conexion cerrada con error: {ws.exception()}")
+            print(f"\n[-] Conexión cerrada con error: {ws.exception()}")
 
     print("\n[-] Celular desconectado.")
     return ws
@@ -105,36 +77,6 @@ def get_local_ip():
     finally:
         s.close()
     return IP
-
-async def udp_broadcast_server():
-    """Escucha broadcasts UDP para auto-descubrimiento desde la app Flutter"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setblocking(False)
-    
-    # Bind al puerto 8888 para auto-descubrimiento
-    try:
-        sock.bind(('0.0.0.0', 8888))
-        print("[*] Auto-descubrimiento UDP escuchando en puerto 8888")
-    except Exception as e:
-        print(f"[-] No se pudo iniciar auto-descubrimiento UDP: {e}")
-        return
-
-    loop = asyncio.get_event_loop()
-    
-    while True:
-        try:
-            data, addr = await loop.sock_recvfrom(sock, 1024)
-            message = data.decode('utf-8', errors='ignore').strip()
-            print(f"[UDP] Broadcast recibido de {addr}: {message}")
-            
-            if message == 'NEOCAMO_DISCOVER':
-                # Responder con la IP y puerto del servidor
-                response = f"NEOCAMO_SERVER:{LOCAL_IP}:8000"
-                await loop.sock_sendto(sock, response.encode('utf-8'), addr)
-                print(f"[UDP] Respondiendo a {addr}: {response}")
-        except Exception:
-            await asyncio.sleep(0.1)
 
 def setup_ssl(ip):
     cert_file = "cert.pem"
@@ -157,11 +99,13 @@ def setup_ssl(ip):
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
 
+        # Generar llave privada
         key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=2048,
         )
 
+        # Definir emisor y sujeto
         subject = issuer = x509.Name([
             x509.NameAttribute(NameOID.COUNTRY_NAME, u"CL"),
             x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Santiago"),
@@ -169,6 +113,7 @@ def setup_ssl(ip):
             x509.NameAttribute(NameOID.COMMON_NAME, ip),
         ])
 
+        # Construir certificado
         cert = x509.CertificateBuilder().subject_name(
             subject
         ).issuer_name(
@@ -189,6 +134,7 @@ def setup_ssl(ip):
             critical=False,
         ).sign(key, hashes.SHA256())
 
+        # Guardar en disco
         with open(key_file, "wb") as f:
             f.write(key.private_bytes(
                 encoding=serialization.Encoding.PEM,
@@ -201,52 +147,33 @@ def setup_ssl(ip):
             
         print("[+] Certificados SSL generados correctamente.")
 
+    # Crear contexto SSL
     ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     ssl_context.load_cert_chain(cert_file, key_file)
     return ssl_context
 
-async def main_async():
-    """Inicia servidor HTTPS + servidor UDP de auto-descubrimiento"""
-    global LOCAL_IP
-    LOCAL_IP = get_local_ip()
+if __name__ == '__main__':
+    ip = get_local_ip()
     port = 8000
     
-    ssl_context = setup_ssl(LOCAL_IP)
+    # Configurar y obtener contexto SSL (Requerido para iOS)
+    ssl_context = setup_ssl(ip)
     
     print("=" * 65)
-    print("         NEOCAMO STUDIO SERVER - HTTPS + AUTO-DISCOVERY")
+    print("            ANTIGRAVITY WEBCAM SERVER - HTTPS ACTIVADO")
     print("=" * 65)
-    print(f"  IP local detectada: {LOCAL_IP}")
-    print(f"  Puerto HTTPS: {port}")
-    print(f"  Auto-descubrimiento UDP: puerto 8888")
+    print("  Instrucciones para iPhone y iOS (WiFi seguro):")
+    print("  1. Asegúrate de que tu iPhone esté en el mismo WiFi que la PC.")
+    print("  2. Abre este enlace en el navegador Safari de tu iPhone:")
+    print(f"\n     -> https://{ip}:{port}\n")
+    print("  3. ALERTA DE SEGURIDAD EN IPHONE:")
+    print("     Verás un aviso de 'Sitio no seguro' (es normal por ser certificado local).")
+    print("     Toca en 'Mostrar Detalles' o 'Opciones Avanzadas'")
+    print("     y selecciona 'Visitar este sitio' / 'Proceder'.")
+    print("  4. Concede permisos de cámara al navegador y transmite.")
     print("=" * 65)
-    print("  La app Flutter detectara este servidor automaticamente.")
-    print("  No necesitas introducir la IP manualmente!")
-    print("=" * 65)
-    print("[*] Iniciando servidor HTTPS + UDP broadcast...")
-    
+    print("[*] Iniciando servidor HTTPS...")
+
     app = web.Application()
     app.add_routes(routes)
-    
-    # Iniciar servidor HTTP/HTTPS
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host='0.0.0.0', port=port, ssl_context=ssl_context)
-    await site.start()
-    
-    print(f"[+] Servidor HTTPS escuchando en https://{LOCAL_IP}:{port}")
-    
-    # Iniciar servidor UDP de auto-descubrimiento en paralelo
-    asyncio.create_task(udp_broadcast_server())
-    print("[+] Auto-descubrimiento UDP activo en puerto 8888")
-    print("=" * 65)
-    
-    # Mantener el servidor corriendo
-    while True:
-        await asyncio.sleep(3600)
-
-if __name__ == '__main__':
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print("\n[*] Servidor detenido por el usuario.")
+    web.run_app(app, host='0.0.0.0', port=port, ssl_context=ssl_context, print=None)
