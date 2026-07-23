@@ -324,6 +324,17 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             }
         }
     }
+
+    /// Alterna el estado de la linterna leyendo el estado actual del dispositivo.
+    /// Resuelve el bug anterior donde toggleFlash siempre la encendía.
+    func toggleTorch() {
+        queue.async { [weak self] in
+            guard let self = self, let camera = self.getActiveCamera() else { return }
+            guard camera.hasTorch else { return }
+            let nextState = (camera.torchMode != .on)
+            self.setTorch(on: nextState)
+        }
+    }
     
     func setFocus(mode: String, position: Float) {
         queue.async { [weak self] in

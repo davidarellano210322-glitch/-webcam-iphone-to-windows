@@ -30,7 +30,7 @@ import AVFoundation
           WebcamStreamer.shared.switchCamera()
           result("ok")
         case "toggleFlash":
-          WebcamStreamer.shared.setTorch(on: true)
+          WebcamStreamer.shared.toggleTorch()
           result("ok")
         case "setLens":
           if let args = call.arguments as? [String: Any],

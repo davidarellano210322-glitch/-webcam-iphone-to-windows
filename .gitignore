@@ -24,3 +24,23 @@ Thumbs.db
 
 # Temporary test folders
 /test_api/
+
+# Local-only artifacts (binaries, installers, archives, legacy code).
+# Keep these on disk but never commit them.
+/_local/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Secrets / certificates (never commit private keys or self-signed certs)
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Large binaries / build artifacts
+*.ipa
+*.zip
+vs_BuildTools.exe
+vs_community.exe

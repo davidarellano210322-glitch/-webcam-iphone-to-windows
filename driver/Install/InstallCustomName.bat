@@ -1,4 +1,8 @@
 @echo off
+setlocal
+
+:: Instala el filtro Unity Capture con un nombre personalizado.
+:: Busca las DLLs en varias ubicaciones (no viven en este directorio).
 
 :: BatchGotAdmin
 :-------------------------------------
@@ -23,9 +27,37 @@ if '%errorlevel%' NEQ '0' (
 :gotAdmin
     pushd "%CD%"
     CD /D "%~dp0"
-    set /P "UCCAPNAME=Enter a custom filter name to register as (default is 'Unity Video Capture'): "
-    echo Installing capture device named '%UCCAPNAME%' ...
-    regsvr32 "UnityCaptureFilter32.dll" "/i:UnityCaptureName=%UCCAPNAME%"
-    regsvr32 "UnityCaptureFilter64.dll" "/i:UnityCaptureName=%UCCAPNAME%"
-    echo "Done"
+
+call :FindDll DLL32 "UnityCaptureFilter32.dll"
+call :FindDll DLL64 "UnityCaptureFilter64.dll"
+
+if "%DLL32%"=="" (
+    echo.
+    echo [ERROR] No se encontro UnityCaptureFilter32.dll.
+    echo Compila desktop_app primero:  dotnet build desktop_app\desktop_app.csproj -c Release
+    echo Las DLLs se generan en desktop_app\bin\Debug\net8.0-windows10.0.19041.0\
+    echo Copia las DLLs junto a este .bat, o reejecuta este script tras compilar.
+    echo.
+    pause
+    exit /B 1
+)
+
+set /P "UCCAPNAME=Enter a custom filter name to register as (default is 'Unity Video Capture'): "
+echo Installing capture device named '%UCCAPNAME%' ...
+regsvr32 "%DLL32%" "/i:UnityCaptureName=%UCCAPNAME%"
+regsvr32 "%DLL64%" "/i:UnityCaptureName=%UCCAPNAME%"
+echo Done.
+goto :EOF
+
+:FindDll
+    set "%1="
+    if exist "%~dp0%2"            ( set "%1=%~dp0%2"         & goto :EOF )
+    for %%C in (Debug Release) do (
+        for %%P in (
+            "%~dp0..\..\desktop_app\bin\%%C\net8.0-windows10.0.19041.0\%2"
+            "%~dp0..\..\desktop_app\bin\%%C\%2"
+        ) do if exist %%P ( set "%1=%%~P" & goto :EOF )
+    )
+    if exist "%~dp0%2" ( set "%1=%~dp0%2" )
+    goto :EOF
 :--------------------------------------
