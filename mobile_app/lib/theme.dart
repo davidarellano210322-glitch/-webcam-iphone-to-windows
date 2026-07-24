@@ -187,7 +187,7 @@ class NCGlass {
     Color borderColor = NC.white10,
   }) {
     return BoxDecoration(
-      color: bg.withOpacity(opacity),
+      color: bg.withValues(alpha: opacity),
       borderRadius: BorderRadius.circular(NCRadius.md),
       border: Border.all(color: borderColor),
     );
@@ -199,7 +199,7 @@ class NCGlass {
     Color borderColor = NC.white10,
   }) {
     return BoxDecoration(
-      color: bg.withOpacity(opacity),
+      color: bg.withValues(alpha: opacity),
       borderRadius: BorderRadius.circular(NCRadius.full),
       border: Border.all(color: borderColor),
     );
@@ -210,5 +210,5 @@ class NCGlass {
 // BOTÓN DE BRILLO / GLOW (para botón REC, botones primarios)
 // ═════════════════════════════════════════════════════════════════════════════
 BoxShadow ncGlow(Color color, {double blur = 15, double opacity = 0.4}) {
-  return BoxShadow(color: color.withOpacity(opacity), blurRadius: blur);
+  return BoxShadow(color: color.withValues(alpha: opacity), blurRadius: blur);
 }

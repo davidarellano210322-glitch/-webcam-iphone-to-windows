@@ -13,7 +13,7 @@ class GridBackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.03)
+      ..color = Colors.white.withValues(alpha: 0.03)
       ..strokeWidth = 0.5;
     const step = 40.0;
     for (double x = 0; x < size.width; x += step) {
@@ -37,7 +37,7 @@ class ScanlinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black.withOpacity(opacity);
+    final paint = Paint()..color = Colors.black.withValues(alpha: opacity);
     for (double y = 0; y < size.height; y += 4) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
@@ -89,7 +89,7 @@ class ViewfinderPainter extends CustomPainter {
     final cx = w / 2;
     final cy = h / 2;
     paint.strokeWidth = 1;
-    final crossColor = Colors.white.withOpacity(0.2);
+    final crossColor = Colors.white.withValues(alpha: 0.2);
     paint.color = crossColor;
     canvas.drawLine(Offset(cx - 12, cy), Offset(cx + 12, cy), paint);
     canvas.drawLine(Offset(cx, cy - 12), Offset(cx, cy + 12), paint);
@@ -128,7 +128,7 @@ class PulseRingsWidget extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: color.withOpacity((0.25 - (val * 0.2)).clamp(0.0, 1.0)),
+                  color: color.withValues(alpha: (0.25 - (val * 0.2)).clamp(0.0, 1.0)),
                   width: 1.5,
                 ),
               ),
@@ -140,7 +140,7 @@ class PulseRingsWidget extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: color.withOpacity((0.15 - (val * 0.12)).clamp(0.0, 1.0)),
+                  color: color.withValues(alpha: (0.15 - (val * 0.12)).clamp(0.0, 1.0)),
                   width: 1.0,
                 ),
               ),

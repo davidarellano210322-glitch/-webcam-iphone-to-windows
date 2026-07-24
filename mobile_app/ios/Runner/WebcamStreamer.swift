@@ -396,14 +396,23 @@ class WebcamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             guard let self = self, let camera = self.getActiveCamera() else { return }
             do {
                 try camera.lockForConfiguration()
-                // Convert duration in milliseconds to CMTime
-                let duration = CMTime(value: CMTimeValue(max(1.0, shutterDurationMs)), timescale: 1000)
-                let clampedDuration = max(camera.activeFormat.minExposureDuration, min(camera.activeFormat.maxExposureDuration, duration))
                 let clampedISO = max(camera.activeFormat.minISO, min(camera.activeFormat.maxISO, iso))
                 
                 if camera.isExposureModeSupported(.custom) {
+                    let duration: CMTime
+                    if shutterDurationMs > 0 {
+                        // Convertir duración en milisegundos a CMTime
+                        duration = CMTime(value: CMTimeValue(max(1.0, shutterDurationMs)), timescale: 1000)
+                    } else {
+                        // shutterDurationMs == 0: mantener la duración actual de exposición.
+                        // Esto permite cambiar solo el ISO sin tocar el shutter,
+                        // evitando el bug donde CMTime(value:0) creaba 0s de exposición.
+                        duration = camera.exposureDuration
+                    }
+                    let clampedDuration = max(camera.activeFormat.minExposureDuration, min(camera.activeFormat.maxExposureDuration, duration))
+                    
                     camera.setExposureModeCustom(duration: clampedDuration, iso: clampedISO, completionHandler: nil)
-                    print("[+] Exposición custom configurada: Shutter=\(shutterDurationMs)ms, ISO=\(clampedISO)")
+                    print("[+] Exposición custom configurada: Shutter=\(shutterDurationMs > 0 ? String(format: "%.1f", shutterDurationMs) + "ms" : "auto"), ISO=\(clampedISO)")
                 }
                 camera.unlockForConfiguration()
             } catch {

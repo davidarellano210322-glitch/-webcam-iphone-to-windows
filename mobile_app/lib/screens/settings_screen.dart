@@ -247,7 +247,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Spacer(),
             Text('${value.toStringAsFixed(1)}$suffix', style: const TextStyle(fontFamily: 'Geist', fontSize: 12, color: NC.primary)),
           ]),
-          Slider(value: value, min: min, max: max, divisions: 20, activeColor: NC.primary, inactiveColor: NC.white10, onChanged: onChanged),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: NC.primary,
+              thumbColor: NC.primary,
+            ),
+            child: Slider(value: value, min: min, max: max, divisions: 20, inactiveColor: NC.white10, onChanged: onChanged),
+          ),
         ],
       ),
     );
@@ -261,7 +267,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Icon(icon, color: NC.primary, size: 20),
           const SizedBox(width: 12),
           Expanded(child: Text(label, style: const TextStyle(fontFamily: 'Inter', fontSize: 14, color: NC.onSurface))),
-          Switch(value: value, activeColor: NC.primary, onChanged: onChanged),
+          Switch(value: value, activeTrackColor: NC.primary, activeThumbColor: NC.primary, onChanged: onChanged),
         ],
       ),
     );

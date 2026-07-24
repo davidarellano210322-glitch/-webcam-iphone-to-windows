@@ -30,7 +30,7 @@ class GlassBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: NC.surfaceContainerLow.withOpacity(0.7),
+        color: NC.surfaceContainerLow.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: NC.white10),
       ),
@@ -72,7 +72,7 @@ class FooterBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: NC.surfaceContainerHigh.withOpacity(0.85),
+        color: NC.surfaceContainerHigh.withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: NC.white05),
       ),
@@ -126,7 +126,6 @@ class VerticalMeterBar extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: bars.asMap().entries.map((entry) {
-        final i = entry.key;
         final val = entry.value.clamp(0.0, 1.0);
         final isHigh = val > 0.7;
         final color = isHigh ? NC.red : (val > 0.4 ? const Color(0xFFFFC107) : activeColor);
@@ -192,8 +191,7 @@ class BatteryWidget extends StatelessWidget {
             duration: const Duration(milliseconds: 300),
             width: width - 6,
             height: barHeight.clamp(2.0, height - 4),
-            decoration: BoxDecoration(
-              color: batteryColor.withOpacity(isLow ? 0.9 : 0.8),
+            decoration: BoxDecoration(                color: batteryColor.withValues(alpha: isLow ? 0.9 : 0.8),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -209,7 +207,7 @@ class BatteryWidget extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '${percent}%',
+          '$percent%',
           style: TextStyle(
             fontFamily: 'Geist',
             fontSize: 9,
@@ -242,7 +240,7 @@ class LensSelector extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.6),
+        color: Colors.black.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: NC.white10),
       ),
@@ -308,7 +306,7 @@ class GlassPanel extends StatelessWidget {
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: bgColor.withOpacity(bgOpacity),
+        color: bgColor.withValues(alpha: bgOpacity),
         borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(color: borderColor ?? NC.white10),
       ),
@@ -355,7 +353,7 @@ class StatusPill extends StatelessWidget {
                 color: color ?? NC.primary,
                 boxShadow: [
                   BoxShadow(
-                    color: (color ?? NC.primary).withOpacity(0.6),
+                    color: (color ?? NC.primary).withValues(alpha: 0.6),
                     blurRadius: 4,
                   ),
                 ],
@@ -444,10 +442,10 @@ class RecordButton extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: btnColor,
-        border: Border.all(color: Colors.black.withOpacity(0.4), width: 4),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.4), width: 4),
         boxShadow: [
           BoxShadow(
-            color: (isRecording ? NC.red : NC.primary).withOpacity(0.5),
+            color: (isRecording ? NC.red : NC.primary).withValues(alpha: 0.5),
             blurRadius: 20,
           ),
         ],
@@ -483,7 +481,7 @@ class RecordButton extends StatelessWidget {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: NC.red.withOpacity(0.3 + (pulseAnimation!.value * 0.5)),
+                  color: NC.red.withValues(alpha: 0.3 + (pulseAnimation!.value * 0.5)),
                   blurRadius: 15 + (pulseAnimation!.value * 15),
                 ),
               ],

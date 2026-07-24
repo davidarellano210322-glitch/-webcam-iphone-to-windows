@@ -56,7 +56,7 @@ class NeoCamoApp extends StatelessWidget {
           onSurface: NC.onSurface,
         ),
         splashColor: NC.primaryGlow,
-        highlightColor: NC.primary.withOpacity(0.1),
+        highlightColor: NC.primary.withValues(alpha: 0.1),
       ),
       home: const NeoCamoMainScreen(),
     );
@@ -78,6 +78,7 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
 
   CameraController? _cameraController;
   bool _cameraInitialized = false;
+  bool _streamingActive = false; // true mientras el streaming nativo (Swift) está activo
   List<CameraDescription> _cameras = [];
 
   bool _cameraPermission = false;
@@ -95,8 +96,33 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
+    // Observa el estado de telemetría para pausar/reanudar la cámara local
+    // según el streaming. iOS solo permite UNA AVCaptureSession activa a la
+    // vez: cuando WebcamStreamer.swift empieza a transmitir debe liberar la
+    // cámara; al detenerse, la recupera para el preview.
+    _telemetry.onStreamingChanged = _onStreamingChanged;
+
     _telemetry.startMock();
     _requestPermissions();
+  }
+
+  /// Pausa/reanuda la sesión de cámara de Flutter en función del streaming.
+  /// Esto evita que dos AVCaptureSession compitan por el hardware de la cámara.
+  void _onStreamingChanged(bool isStreaming) {
+    _streamingActive = isStreaming;
+    if (!mounted) return;
+    setState(() {});
+
+    final ctrl = _cameraController;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+
+    if (isStreaming) {
+      // El streaming nativo toma la cámara: liberar el preview de Flutter.
+      ctrl.pausePreview().catchError((_) {});
+    } else {
+      // El streaming terminó: recuperar el preview de Flutter.
+      ctrl.resumePreview().catchError((_) {});
+    }
   }
 
   @override
@@ -201,6 +227,7 @@ class _NeoCamoMainScreenState extends State<NeoCamoMainScreen>
           key: const ValueKey('LiveMonitorScreen'),
           telemetry: _telemetry,
           cameraController: _cameraInitialized ? _cameraController : null,
+          streamingActive: _streamingActive,
           onBack: _goToSetup,
           onOpenTune: () => _openTunePanel(context),
           onOpenSettings: _goToSettings,

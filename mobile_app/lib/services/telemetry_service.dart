@@ -100,6 +100,11 @@ class TelemetryService {
 
   void Function(TelemetryState)? onStateChanged;
 
+  /// Notifica cuando el streaming nativo se inicia/detiene. Lo usa la app
+  /// para liberar/recuperar la sesión de cámara local (iOS solo permite una
+  /// AVCaptureSession activa a la vez).
+  void Function(bool isStreaming)? onStreamingChanged;
+
   // Simulación de audio
   final _rand = math.Random();
   final List<double> _audioLeft = List.filled(6, 0.05);
@@ -174,19 +179,23 @@ class TelemetryService {
         bitrate: '8.5 Mbps',
         latencyMs: 12,
       ));
+      // Notificar que el streaming nativo está activo para que la app libere
+      // la sesión de cámara local (evita conflicto de AVCaptureSession).
+      onStreamingChanged?.call(true);
 
       // Iniciar timer para actualizar telemetría desde Swift
       _telemetryTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         _fetchNativeTelemetry();
       });
     } catch (e) {
-      // Si el canal nativo falla (ej: running en simulador), fallback mock
+      // Si el canal nativo falla (ej: sin soporte nativo), reportar error
       _updateState(_state.copyWith(
-        isStreaming: true,
-        connectionStatus: 'TRANSMITIENDO (MOCK)',
-        bitrate: '8.5 Mbps',
-        latencyMs: 12,
+        isStreaming: false,
+        connectionStatus: 'ERROR',
+        bitrate: '0.0 Mbps',
+        latencyMs: 0,
       ));
+      onStreamingChanged?.call(false);
 
       _telemetryTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         _fetchNativeTelemetry();
@@ -208,6 +217,8 @@ class TelemetryService {
       bitrate: '0.0 Mbps',
       latencyMs: 0,
     ));
+    // El streaming terminó: la app puede recuperar la cámara local.
+    onStreamingChanged?.call(false);
   }
 
   /// Solicita telemetría al código nativo (WebcamStreamer.swift)
@@ -283,7 +294,7 @@ class TelemetryService {
     ));
     try {
       await _channel.invokeMethod('setResolution', <String, dynamic>{
-        'width': resolution.split('p').first,
+        'width': resolution,
         'fps': fps,
       });
     } catch (_) {}

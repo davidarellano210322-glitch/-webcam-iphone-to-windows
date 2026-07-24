@@ -24,24 +24,62 @@ namespace desktop_app
 {
     public partial class MainWindow : Window
     {
+        private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                this.DragMove();
+            }
+        }
+
+        private void MinimizeBtn_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MaximizeBtn_Click(object sender, RoutedEventArgs e)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                WindowState = WindowState.Normal;
+                if (MaximizeIconText != null) MaximizeIconText.Text = "🗖";
+            }
+            else
+            {
+                WindowState = WindowState.Maximized;
+                if (MaximizeIconText != null) MaximizeIconText.Text = "🗗";
+            }
+        }
+
+        private void CloseBtn_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
         private bool _isTunnelRunning = false;
         private CancellationTokenSource? _tunnelCts;
         private string? _connectedDeviceUdid;
         private DispatcherTimer? _devicePollTimer;
-        
+
+        // Tareas en segundo plano del túnel de video. Se trackean para poder
+        // esperar a que terminen de forma limpia en StopTunnel() y evitar la
+        // race condition al cambiar resolución (hilos viejos compitiendo con
+        // los nuevos y dejando el preview en estado inconsistente).
+        private Task? _streamTask;
+        private Task? _controlTask;
+        private Task? _decodeReaderTask;
+        private Task? _ffmpegStderrTask;
+        private readonly object _stopLock = new();
+
         private VirtualCameraBridge _virtualCameraBridge = new VirtualCameraBridge();
         private Process? _ffmpegProcess;
         
-        // ========== RETRY & CONNECTION STATE ==========
         private int _connectionRetryCount = 0;
         private const int MaxConnectionRetries = 15;
-        private const int InitialReadTimeoutMs = 8000; // 8s warm-up para iOS
-        private const int StreamReadTimeoutMs = 1000;  // 1s durante streaming normal
+        private const int InitialReadTimeoutMs = 8000;
+        private const int StreamReadTimeoutMs = 1000;
         private bool _isInWarmupPhase = false;
         private bool _hasEverReceivedVideo = false;
-        // ==============================================
         
-        // Dynamic control USB connection (Port 6001)
         private iDeviceConnectionHandle? _activeControlConn;
         private readonly SemaphoreSlim _sendSemaphore = new SemaphoreSlim(1, 1);
         private bool _isUpdatingUi = false;
@@ -62,7 +100,6 @@ namespace desktop_app
         private int _activeWidth = 1920;
         private int _activeHeight = 1080;
 
-        // WinRT Face Analysis variables
         private FaceTracker? _faceTracker = null;
         private readonly object _faceLock = new object();
         private bool _isDetectingFaces = false;
@@ -78,23 +115,22 @@ namespace desktop_app
         private bool _isAutoFramingEnabled = false;
         private bool _isAutoFramingZoomEnabled = false;
 
-        // System Tray
         private WinForms.NotifyIcon? _trayIcon;
         private bool _isExiting = false;
+
+        // Recording timer
+        private DispatcherTimer? _recTimer;
+        private DateTime _recStartTime;
 
         public MainWindow()
         {
             InitializeComponent();
             InitializeLibiMobileDevice();
 
-            // Local video preview bitmap init (1080p FHD by default)
             _previewBitmap = new WriteableBitmap(1920, 1080, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
             VideoPreviewImage.Source = _previewBitmap;
 
-            // Start hardware-accelerated face tracker initialization
             _ = InitFaceTrackerAsync();
-
-            // Initialize System Tray Icon
             InitializeTrayIcon();
         }
 
@@ -102,25 +138,21 @@ namespace desktop_app
         {
             _trayIcon = new WinForms.NotifyIcon
             {
-                Text = "Antigravity Webcam",
+                Text = "NeoCamo Studio",
                 Visible = true,
-                Icon = Drawing.SystemIcons.Application // Icono por defecto
+                Icon = Drawing.SystemIcons.Application
             };
 
-            // Intentar cargar un icono personalizado si existe
             string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
             if (System.IO.File.Exists(iconPath))
             {
                 try { _trayIcon.Icon = new Drawing.Icon(iconPath); } catch { }
             }
 
-            // Menú contextual
             var contextMenu = new WinForms.ContextMenuStrip();
             contextMenu.Items.Add("Mostrar", null, (s, e) => ShowFromTray());
             contextMenu.Items.Add("Salir", null, (s, e) => ExitApplication());
             _trayIcon.ContextMenuStrip = contextMenu;
-
-            // Doble clic para mostrar
             _trayIcon.DoubleClick += (s, e) => ShowFromTray();
         }
 
@@ -143,7 +175,6 @@ namespace desktop_app
         {
             if (!_isExiting)
             {
-                // Minimizar a la bandeja en lugar de cerrar
                 e.Cancel = true;
                 Hide();
             }
@@ -161,23 +192,17 @@ namespace desktop_app
                 NativeLibraries.Load();
                 Log("[+] Librerías nativas cargadas con éxito.");
 
-                // Initialize UnityCapture Virtual Camera
                 try
                 {
                     _virtualCameraBridge.Initialize();
                     Log("[+] Puente de cámara virtual DirectShow (UnityCapture) inicializado.");
-                    
-                    // Verificar que el driver esté realmente instalado
                     CheckUnityCaptureDriver();
                 }
                 catch (Exception ex)
                 {
                     Log($"[-] ADVERTENCIA: No se pudo inicializar la cámara virtual: {ex.Message}");
-                    Log("    La cámara virtual NO estará disponible en Zoom/OBS hasta que instales el driver UnityCapture.");
-                    Log("    Ve a la carpeta 'driver/' del proyecto y sigue las instrucciones de instalación.");
                 }
 
-                // Start device polling
                 _devicePollTimer = new DispatcherTimer();
                 _devicePollTimer.Interval = TimeSpan.FromSeconds(1);
                 _devicePollTimer.Tick += (s, e) => PollDevices();
@@ -187,7 +212,6 @@ namespace desktop_app
             catch (Exception ex)
             {
                 Log($"[-] ERROR de inicialización: {ex.Message}");
-                Log("    Por favor, asegúrate de que iTunes esté instalado en tu PC y el driver registrado.");
             }
         }
 
@@ -198,6 +222,7 @@ namespace desktop_app
                 Dispatcher.Invoke(() => Log(message));
                 return;
             }
+
             string timeStamp = DateTime.Now.ToString("HH:mm:ss");
             LogTextBox.AppendText($"[{timeStamp}] {message}\n");
             LogTextBox.ScrollToEnd();
@@ -228,14 +253,16 @@ namespace desktop_app
                         _connectedDeviceUdid = activeUdid;
                         Log($"[+] iPhone detectado físicamente por USB (UDID: {activeUdid})");
                         
-                        // Device detected, update UI dropdown content (temporary placeholder until control channel updates it)
-                        if (DeviceComboBox != null && DeviceComboBox.Items.Count > 0 && DeviceComboBox.Items[0] is System.Windows.Controls.ComboBoxItem firstItem)
+                        if (DeviceComboBox != null)
                         {
-                            firstItem.Content = $"iPhone ({activeUdid.Substring(0, 8)})";
+                            DeviceComboBox.Text = $"iPhone ({activeUdid.Substring(0, 8)})";
+                        }
+                        if (DeviceDetailsText != null)
+                        {
+                            DeviceDetailsText.Text = "USB Conectado";
                         }
                     }
 
-                    // Auto-start tunnel if not currently running
                     if (!_isTunnelRunning)
                     {
                         StartTunnel();
@@ -247,9 +274,11 @@ namespace desktop_app
                     {
                         _connectedDeviceUdid = null;
                         Log("[-] iPhone desconectado del cable USB.");
+                        if (DeviceComboBox != null) DeviceComboBox.Text = "Sin iPhone";
+                        if (DeviceDetailsText != null) DeviceDetailsText.Text = "Desconectado";
                         if (_isTunnelRunning)
                         {
-                            StopTunnel();
+                            _ = StopTunnel();
                         }
                     }
                 }
@@ -261,17 +290,17 @@ namespace desktop_app
             }
         }
 
-        private void StartTunnelBtn_Click(object sender, RoutedEventArgs e)
+        private async void StartTunnelBtn_Click(object sender, RoutedEventArgs e)
         {
             if (_isTunnelRunning)
             {
-                StopTunnel();
+                await StopTunnel();
             }
             else
             {
                 if (string.IsNullOrEmpty(_connectedDeviceUdid))
                 {
-                    System.Windows.MessageBox.Show("Por favor, conecta un iPhone por cable USB primero.", "Dispositivo no detectado", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                    System.Windows.MessageBox.Show("Por favor, conecta un iPhone por cable USB primero.", "Dispositivo no detectado", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 StartTunnel();
@@ -282,13 +311,11 @@ namespace desktop_app
         {
             _isTunnelRunning = true;
             _tunnelCts = new CancellationTokenSource();
-            StartTunnelBtn.Content = "Detener Servidor USB";
             StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#475569")!;
 
             ushort videoPort = 6000;
             ushort controlPort = 6001;
 
-            // 1. Start low-latency FFmpeg decoder using local loopback input
             try
             {
                 StartFFmpegDecoder(_tunnelCts.Token);
@@ -296,57 +323,86 @@ namespace desktop_app
             catch (Exception ex)
             {
                 Log($"[-] ERROR al iniciar decodificador FFmpeg: {ex.Message}");
-                StopTunnel();
+                _ = StopTunnel();
                 return;
             }
 
-            // 2. Start direct connection task for video stream (Port 6000)
             Log($"[*] Conectando puerto de video H.264 (iPhone:{videoPort})...");
-            _ = Task.Run(() => ConnectAndStreamFromIphoneAsync(_connectedDeviceUdid!, videoPort, _tunnelCts.Token));
+            _streamTask = Task.Run(() => ConnectAndStreamFromIphoneAsync(_connectedDeviceUdid!, videoPort, _tunnelCts.Token));
 
-            // 3. Start direct connection task for dynamic control commands (Port 6001)
             Log($"[*] Conectando puerto de control bidireccional (iPhone:{controlPort})...");
-            _ = Task.Run(() => ConnectControlChannelAsync(_connectedDeviceUdid!, controlPort, _tunnelCts.Token));
+            _controlTask = Task.Run(() => ConnectControlChannelAsync(_connectedDeviceUdid!, controlPort, _tunnelCts.Token));
 
             RecordBtn.Visibility = Visibility.Visible;
         }
 
-        private void StopTunnel()
+        private async Task StopTunnel()
         {
-            _isTunnelRunning = false;
-            _tunnelCts?.Cancel();
+            Task? streamTask = null;
+            Task? controlTask = null;
+            Task? decodeTask = null;
+            Task? stderrTask = null;
 
-            // Stop local recording if active
-            if (_isRecording)
+            // Se serializa con un lock para evitar que dos StopTunnel concurrentes
+            // (p.ej. cambio de resolución + desconexión de USB) pisén el estado.
+            lock (_stopLock)
             {
-                StopRecording();
-            }
-            
-            // Close FFmpeg process
-            if (_ffmpegProcess != null && !_ffmpegProcess.HasExited)
-            {
-                try { _ffmpegProcess.Kill(); } catch { }
-                _ffmpegProcess.Dispose();
+                _isTunnelRunning = false;
+                _tunnelCts?.Cancel();
+
+                if (_isRecording)
+                {
+                    StopRecording();
+                }
+
+                if (_ffmpegProcess != null && !_ffmpegProcess.HasExited)
+                {
+                    try { _ffmpegProcess.Kill(); } catch { }
+                }
+                _ffmpegProcess?.Dispose();
                 _ffmpegProcess = null;
+
+                _activeControlConn = null;
+
+                // Capturamos referencias locales y reiniciamos para que el siguiente
+                // StartTunnel arranque limpio (evita race condition al cambiar resolución
+                // donde hilos viejos compiten con los nuevos).
+                streamTask = _streamTask;
+                controlTask = _controlTask;
+                decodeTask = _decodeReaderTask;
+                stderrTask = _ffmpegStderrTask;
+                _streamTask = null;
+                _controlTask = null;
+                _decodeReaderTask = null;
+                _ffmpegStderrTask = null;
+
+                // Liberar el flag de render para que el siguiente Start no quede
+                // atascado si un frame se quedó a medio renderizar.
+                Interlocked.Exchange(ref _isRenderingPreview, 0);
             }
 
+            // Esperar a que los hilos terminen sin bloquear el UI thread.
+            // decodeReader/stderr terminan rápido (EOF al morir FFmpeg);
+            // stream/control terminan al ver el token cancelado.
+            try
+            {
+                if (decodeTask != null) await Task.WhenAny(decodeTask, Task.Delay(2000));
+                if (stderrTask != null) await Task.WhenAny(stderrTask, Task.Delay(1000));
+                if (streamTask != null) await Task.WhenAny(streamTask, Task.Delay(3000));
+                if (controlTask != null) await Task.WhenAny(controlTask, Task.Delay(2000));
+            }
+            catch { }
 
-
-            // Clear control handle
-            _activeControlConn = null;
-
+            // Actualizar UI en el hilo correcto
             Dispatcher.Invoke(() =>
             {
                 if (StartTunnelBtn != null)
                 {
-                    StartTunnelBtn.Content = "Iniciar Servidor USB";
-                    StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
+                    StartTunnelBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#55EE71")!;
                 }
                 if (RecordBtn != null)
                 {
                     RecordBtn.Visibility = Visibility.Collapsed;
-                    RecordBtn.Content = "Grabar (REC)";
-                    RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
                 }
                 if (PlaceholderGrid != null)
                 {
@@ -354,12 +410,16 @@ namespace desktop_app
                 }
                 if (StatusIndicatorDot != null)
                 {
-                    StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
+                    StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#DC2626")!;
                 }
                 if (StatusBadgeText != null)
                 {
                     StatusBadgeText.Text = "SIN SEÑAL";
-                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
+                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#DC2626")!;
+                }
+                if (LiveBadge != null)
+                {
+                    LiveBadge.Visibility = Visibility.Collapsed;
                 }
             });
 
@@ -370,7 +430,6 @@ namespace desktop_app
         {
             Log("[*] Iniciando decodificador FFmpeg por hardware (low-delay)...");
 
-            // Verificar que ffmpeg.exe sea accesible
             string ffmpegPath = FindFFmpegExecutable();
             if (ffmpegPath == null)
             {
@@ -386,25 +445,21 @@ namespace desktop_app
                 string tagLower = tag.ToLowerInvariant();
                 if (tagLower == "720p")
                 {
-                    width = 1280;
-                    height = 720;
+                    width = 1280; height = 720;
                 }
                 else if (tagLower == "1080p")
                 {
-                    width = 1920;
-                    height = 1080;
+                    width = 1920; height = 1080;
                 }
                 else if (tagLower == "4k")
                 {
-                    width = 3840;
-                    height = 2160;
+                    width = 3840; height = 2160;
                 }
             }
 
             _activeWidth = width;
             _activeHeight = height;
 
-            // Clean up any existing zombie ffmpeg processes first to free up port 6002
             try
             {
                 foreach (var p in Process.GetProcessesByName("ffmpeg"))
@@ -414,10 +469,6 @@ namespace desktop_app
             }
             catch { }
             
-            // Decodificador ultra-low-latency
-            // -rtbufsize 1M: buffer mínimo para tiempo real
-            // -max_delay 0: sin delay de muxer
-            // -fflags +nobuffer+discardcorrupt: sin buffer de entrada
             string args = $"-rtbufsize 1M -max_delay 0 -probesize 32 -analyzeduration 0 -f h264 -fflags +nobuffer+discardcorrupt -flags +low_delay -avoid_negative_ts make_zero -i pipe:0 -threads 1 -fps_mode passthrough -vsync 0 -vf scale={width}:{height}:flags=fast_bilinear -flush_packets 1 -f rawvideo -pix_fmt rgba pipe:1";
 
             var startInfo = new ProcessStartInfo
@@ -426,7 +477,7 @@ namespace desktop_app
                 Arguments = args,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardInput = true, // Recibe mediante StandardInput
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
@@ -434,14 +485,11 @@ namespace desktop_app
             _ffmpegProcess = Process.Start(startInfo);
             if (_ffmpegProcess == null)
             {
-                throw new Exception($"No se pudo arrancar {ffmpegPath}. Verifica que el archivo exista y sea ejecutable.");
+                throw new Exception($"No se pudo arrancar {ffmpegPath}.");
             }
 
-            // Leer stderr
-            _ = Task.Run(() => ReadFFmpegStderrAsync(_ffmpegProcess.StandardError, token));
-
-            // Leer frames decodificados
-            _ = Task.Run(() => ReadDecodedFrames(_ffmpegProcess.StandardOutput.BaseStream, token));
+            _ffmpegStderrTask = Task.Run(() => ReadFFmpegStderrAsync(_ffmpegProcess.StandardError, token));
+            _decodeReaderTask = Task.Run(() => ReadDecodedFrames(_ffmpegProcess.StandardOutput.BaseStream, token));
         }
 
         private async Task ReadFFmpegStderrAsync(StreamReader stderrReader, CancellationToken token)
@@ -451,7 +499,6 @@ namespace desktop_app
                 string? line;
                 while (!token.IsCancellationRequested && (line = await stderrReader.ReadLineAsync(token)) != null)
                 {
-                    // Solo loguear errores/warnings reales, no líneas de estadísticas
                     string logLine = line;
                     if (!string.IsNullOrWhiteSpace(logLine) && 
                         (logLine.Contains("error", StringComparison.OrdinalIgnoreCase) || 
@@ -491,7 +538,6 @@ namespace desktop_app
 
                         _virtualCameraBridge.WriteFrame(outWidth, outHeight, processedFrame);
 
-                        // Feed the recorder if active
                         if (_isRecording && _ffmpegRecorderStdin != null && outWidth == _recordWidth && outHeight == _recordHeight)
                         {
                             try
@@ -555,7 +601,7 @@ namespace desktop_app
         private async Task ConnectAndStreamFromIphoneAsync(string udid, ushort targetPort, CancellationToken token)
         {
             var idevice = LibiMobileDevice.Instance.iDevice;
-            var packetQueue = new BlockingCollection<byte[]>(new ConcurrentQueue<byte[]>(), 2); // Ultra baja latencia: solo 2 paquetes
+            var packetQueue = new BlockingCollection<byte[]>(new ConcurrentQueue<byte[]>(), 2);
             byte[] lengthBuf = new byte[4];
             byte[] startCode = new byte[] { 0, 0, 0, 1 };
             
@@ -563,7 +609,6 @@ namespace desktop_app
             _isInWarmupPhase = true;
             _hasEverReceivedVideo = false;
 
-            // Mostrar "CONECTANDO..." en la UI
             Dispatcher.Invoke(() => {
                 Log("[*] Iniciando ciclo de conexión con reintentos...");
                 if (StatusBadgeText != null)
@@ -573,7 +618,6 @@ namespace desktop_app
                 }
             });
 
-            // Write task: consume cola y escribe a FFmpeg (vive durante todo el ciclo)
             var writeTask = Task.Run(() =>
             {
                 try
@@ -619,7 +663,6 @@ namespace desktop_app
                 }
             }, token);
 
-            // Bucle principal de conexión con reintentos
             while (!token.IsCancellationRequested && _connectionRetryCount < MaxConnectionRetries)
             {
                 iDeviceHandle? deviceHandle = null;
@@ -637,10 +680,8 @@ namespace desktop_app
                         Log($"[+] Intento {_connectionRetryCount + 1}: Conectado al puerto {targetPort}. Esperando primer paquete de video...");
                     });
 
-                    // ---- FASE DE LECTURA ----
                     while (!token.IsCancellationRequested)
                     {
-                        // Usar timeout más largo durante warm-up, más corto durante streaming
                         int readTimeout = _isInWarmupPhase ? InitialReadTimeoutMs : StreamReadTimeoutMs;
                         
                         var rErr = ReadExactBytes(deviceConnHandle, lengthBuf, 4, token, readTimeout);
@@ -665,7 +706,6 @@ namespace desktop_app
                                 throw new TimeoutException($"Timeout leyendo payload de video (timeout={readTimeout}ms)");
                         }
 
-                        // ¡Primer paquete recibido con éxito! Salir de warm-up
                         if (_isInWarmupPhase)
                         {
                             _isInWarmupPhase = false;
@@ -674,16 +714,19 @@ namespace desktop_app
                             Dispatcher.Invoke(() => {
                                 Log("[+] ¡Primer paquete de video recibido! Streaming estable.");
                                 if (PlaceholderGrid != null) PlaceholderGrid.Visibility = Visibility.Collapsed;
-                                if (StatusIndicatorDot != null) StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
+                                if (StatusIndicatorDot != null) StatusIndicatorDot.Fill = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#55EE71")!;
                                 if (StatusBadgeText != null)
                                 {
                                     StatusBadgeText.Text = "TRANSMITIENDO";
-                                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#4ade80")!;
+                                    StatusBadgeText.Foreground = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#55EE71")!;
+                                }
+                                if (LiveBadge != null)
+                                {
+                                    LiveBadge.Visibility = Visibility.Visible;
                                 }
                             });
                         }
 
-                        // Descartar frames viejos si la cola está llena (baja latencia)
                         while (packetQueue.Count >= 2)
                         {
                             packetQueue.TryTake(out _);
@@ -703,13 +746,12 @@ namespace desktop_app
                     {
                         Dispatcher.Invoke(() => {
                             Log($"[-] Se agotaron los {MaxConnectionRetries} reintentos. Deteniendo túnel.");
-                            StopTunnel();
+                            _ = StopTunnel();
                         });
                         break;
                     }
 
-                    // Esperar antes de reintentar (incrementando el delay)
-                    int delay = Math.Min(1000 * _connectionRetryCount, 5000); // 1s, 2s, 3s, 4s, 5s max
+                    int delay = Math.Min(1000 * _connectionRetryCount, 5000);
                     try { await Task.Delay(delay, token); } catch { break; }
                 }
                 finally
@@ -726,7 +768,6 @@ namespace desktop_app
             packetQueue.Dispose();
         }
 
-        // Conectar el socket del canal de control bidireccional (Puerto 6001)
         private async Task ConnectControlChannelAsync(string udid, ushort targetPort, CancellationToken token)
         {
             await Task.Yield();
@@ -742,7 +783,7 @@ namespace desktop_app
                 err = idevice.idevice_connect(deviceHandle, targetPort, out deviceConnHandle);
                 if (err != iDeviceError.Success)
                 {
-                    Log($"[-] Canal de control no disponible en puerto {targetPort} (¿App de iOS desactualizada?)");
+                    Log($"[-] Canal de control no disponible en puerto {targetPort}.");
                     return;
                 }
 
@@ -814,41 +855,20 @@ namespace desktop_app
                         {
                             _isUpdatingUi = true;
 
-                            BatteryPercentageText.Text = $"{batteryLevel}%";
-                            BatteryIcon.Text = isCharging ? "⚡" : "🔋";
-                            DeviceDetailsText.Text = $"iOS {systemVersion} • USB Conectado";
+                            if (BatteryPercentageText != null)
+                                BatteryPercentageText.Text = $"{batteryLevel}%";
+                            if (BatteryIcon != null)
+                                BatteryIcon.Text = isCharging ? "⚡" : "🔋";
+                            if (DeviceDetailsText != null)
+                                DeviceDetailsText.Text = $"iOS {systemVersion} • USB";
+                            if (DeviceComboBox != null)
+                                DeviceComboBox.Text = deviceName;
 
-                            if (DeviceComboBox.Items.Count > 0 && DeviceComboBox.Items[0] is System.Windows.Controls.ComboBoxItem firstItem)
-                            {
-                                firstItem.Content = deviceName;
-                            }
-
-                            foreach (System.Windows.Controls.ComboBoxItem item in LensComboBox.Items)
-                            {
-                                if (item.Tag?.ToString() == lens)
-                                {
-                                    LensComboBox.SelectedItem = item;
-                                    break;
-                                }
-                            }
-
-                            foreach (System.Windows.Controls.ComboBoxItem item in ResolutionComboBox.Items)
-                            {
-                                if (item.Tag?.ToString() == resolution)
-                                {
-                                    ResolutionComboBox.SelectedItem = item;
-                                    break;
-                                }
-                            }
-
-                            foreach (System.Windows.Controls.ComboBoxItem item in FpsComboBox.Items)
-                            {
-                                if (item.Tag?.ToString() == fps.ToString())
-                                {
-                                    FpsComboBox.SelectedItem = item;
-                                    break;
-                                }
-                            }
+                            // Update right panel battery bar
+                            if (BatteryBarFill != null)
+                                BatteryBarFill.Width = batteryLevel * 1.8; // max 180px
+                            if (BatteryText != null)
+                                BatteryText.Text = $"{batteryLevel}%";
 
                             _isUpdatingUi = false;
                         });
@@ -877,11 +897,9 @@ namespace desktop_app
                 var idevice = LibiMobileDevice.Instance.iDevice;
                 uint sent = 0;
                 
-                // Write header
                 var err = idevice.idevice_connection_send(conn, lengthHeader, 4, ref sent);
                 if (err != iDeviceError.Success) throw new Exception($"Error enviando cabecera: {err}");
 
-                // Write payload
                 err = idevice.idevice_connection_send(conn, payload, (uint)payload.Length, ref sent);
                 if (err != iDeviceError.Success) throw new Exception($"Error enviando payload: {err}");
             }
@@ -895,11 +913,12 @@ namespace desktop_app
             }
         }
 
-        // Action listeners wired to WPF controls
-        private async void LensComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        // ═════ CONTROL EVENT HANDLERS ═════
+
+        private async void LensButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_isUpdatingUi || LensComboBox == null || _activeControlConn == null) return;
-            if (LensComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag)
+            if (_isUpdatingUi || _activeControlConn == null) return;
+            if (sender is System.Windows.Controls.RadioButton btn && btn.Tag is string tag)
             {
                 string cmd = $"{{\"cmd\":\"setCamera\",\"val\":\"{tag}\"}}";
                 await SendControlCommandAsync(cmd);
@@ -937,7 +956,7 @@ namespace desktop_app
                     if (_isTunnelRunning)
                     {
                         Log("[*] Reiniciando conexión de video para aplicar nueva resolución...");
-                        StopTunnel();
+                        await StopTunnel();
                         await Task.Delay(400);
                         StartTunnel();
                     }
@@ -961,6 +980,9 @@ namespace desktop_app
             double val = BrightnessSlider.Value;
             string cmd = $"{{\"cmd\":\"setBrightness\",\"val\":{val:F2}}}";
             await SendControlCommandAsync(cmd);
+            
+            if (BrightnessValueText != null)
+                BrightnessValueText.Text = val.ToString("F1");
         }
 
         private async void ExposureControl_Changed(object sender, RoutedEventArgs e)
@@ -974,9 +996,10 @@ namespace desktop_app
             string cmd;
             if (isCustom)
             {
-                double shutter = ShutterSlider.Value; // milliseconds
+                double shutter = ShutterSlider.Value;
                 double iso = IsoSlider.Value;
                 cmd = $"{{\"cmd\":\"setExposure\",\"mode\":\"manual\",\"shutter\":{shutter:F2},\"iso\":{iso:F2}}}";
+                if (IsoValueText != null) IsoValueText.Text = $"ISO: {iso:F0}";
             }
             else
             {
@@ -999,6 +1022,7 @@ namespace desktop_app
                 double temp = TemperatureSlider.Value;
                 double tint = TintSlider.Value;
                 cmd = $"{{\"cmd\":\"setWhiteBalance\",\"mode\":\"manual\",\"temp\":{temp:F2},\"tint\":{tint:F2}}}";
+                if (TempValueText != null) TempValueText.Text = $"{temp:F0}K";
             }
             else
             {
@@ -1014,12 +1038,17 @@ namespace desktop_app
             double val = ZoomSlider.Value;
             string cmd = $"{{\"cmd\":\"setZoom\",\"val\":{val:F2}}}";
             await SendControlCommandAsync(cmd);
+            
+            if (ZoomValueText != null) ZoomValueText.Text = $"{val:F1}x";
+            if (PropZoom != null) PropZoom.Text = $"{val:F1}x";
         }
+
         private void FilterComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (FilterComboBox != null && FilterComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag)
             {
                 _activeFilter = tag;
+                if (PropFilter != null) PropFilter.Text = item.Content.ToString();
             }
         }
 
@@ -1028,6 +1057,21 @@ namespace desktop_app
             if (FilterIntensitySlider != null)
             {
                 _filterIntensity = FilterIntensitySlider.Value / 100.0;
+            }
+        }
+
+        private void SceneThumb_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Reset all scenes
+            if (Scene1Thumb != null) { Scene1Thumb.BorderBrush = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#1AFFFFFF")!; Scene1Thumb.Opacity = 0.6; }
+            if (Scene2Thumb != null) { Scene2Thumb.BorderBrush = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#1AFFFFFF")!; Scene2Thumb.Opacity = 0.6; }
+            if (Scene3Thumb != null) { Scene3Thumb.BorderBrush = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#1AFFFFFF")!; Scene3Thumb.Opacity = 0.6; }
+
+            // Activate selected
+            if (sender is System.Windows.Controls.Border border)
+            {
+                border.BorderBrush = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#55EE71")!;
+                border.Opacity = 1.0;
             }
         }
 
@@ -1069,11 +1113,10 @@ namespace desktop_app
                 }
 
                 string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string filePath = Path.Combine(videosFolder, $"CamoStream_{timestamp}.mp4");
+                string filePath = Path.Combine(videosFolder, $"NeoCamo_{timestamp}.mp4");
 
                 Log($"[*] Iniciando grabación local en: {filePath}");
 
-                // FFmpeg command to record raw video to mp4 with H.264 compression
                 string args = $"-f rawvideo -pix_fmt rgba -s {width}x{height} -r 30 -i pipe:0 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -y \"{filePath}\"";
 
                 var startInfo = new ProcessStartInfo
@@ -1096,8 +1139,16 @@ namespace desktop_app
                 _ffmpegRecorderStdin = _ffmpegRecorderProcess.StandardInput.BaseStream;
                 _isRecording = true;
 
-                RecordBtn.Content = "Detener REC";
-                RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#ef4444")!;
+                _recStartTime = DateTime.Now;
+                _recTimer = new DispatcherTimer();
+                _recTimer.Interval = TimeSpan.FromSeconds(1);
+                _recTimer.Tick += (s, e) => {
+                    if (RecTimeText != null)
+                        RecTimeText.Text = (DateTime.Now - _recStartTime).ToString(@"hh\:mm\:ss");
+                };
+                _recTimer.Start();
+
+                RecordBtn.Content = "■ DETENER";
                 Log("[+] Grabación de video iniciada con éxito.");
             }
             catch (Exception ex)
@@ -1110,6 +1161,8 @@ namespace desktop_app
         private void StopRecording()
         {
             _isRecording = false;
+            _recTimer?.Stop();
+            _recTimer = null;
 
             if (_ffmpegRecorderStdin != null)
             {
@@ -1139,9 +1192,10 @@ namespace desktop_app
             {
                 if (RecordBtn != null)
                 {
-                    RecordBtn.Content = "Grabar (REC)";
-                    RecordBtn.Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFrom("#e11d48")!;
+                    RecordBtn.Content = "● REC";
                 }
+                if (RecTimeText != null)
+                    RecTimeText.Text = "00:00:00";
             });
 
             Log("[+] Grabación guardada y finalizada correctamente.");
@@ -1152,13 +1206,14 @@ namespace desktop_app
             if (MirrorCheckBox != null)
             {
                 _isMirrorActive = MirrorCheckBox.IsChecked == true;
+                if (PropMirror != null) PropMirror.Text = _isMirrorActive ? "ON" : "OFF";
             }
             if (RotationComboBox != null && RotationComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag && int.TryParse(tag, out int angle))
             {
                 _rotationAngle = angle;
+                if (PropRotation != null) PropRotation.Text = $"{angle}°";
             }
 
-            // Aplicar espejo a la preview usando ScaleTransform (GPU, cero procesamiento de píxeles)
             if (VideoPreviewImage != null)
             {
                 var scale = new System.Windows.Media.ScaleTransform(_isMirrorActive ? -1 : 1, 1);
@@ -1173,52 +1228,39 @@ namespace desktop_app
             outWidth = width;
             outHeight = height;
 
-            // Detectar si hay procesamiento activo
             bool needsProcessing = _rotationAngle != 0 || 
                                    (_activeFilter != "none" && _filterIntensity > 0.0) ||
                                    (_isSpotlightEnabled && _faceDetected) ||
                                    (_isAutoFramingEnabled && _faceDetected);
 
-            // TRUCO: Si NO hay procesamiento, devolvemos el buffer original sin copiar
-            // Esto elimina 8MB de copia por frame (~240MB/s a 30fps)
             if (!needsProcessing)
             {
                 return inputRgba;
             }
 
-            // Solo copiamos si hay procesamiento activo
             byte[] processed = new byte[inputRgba.Length];
             Buffer.BlockCopy(inputRgba, 0, processed, 0, inputRgba.Length);
 
-            // Trigger asynchronous WinRT face detection (solo si se necesita)
             if (_isSpotlightEnabled || _isAutoFramingEnabled)
             {
                 TriggerFaceDetection(inputRgba, width, height);
             }
 
-            // 1. Apply Spotlight (Face Highlight)
             if (_isSpotlightEnabled && _faceDetected)
             {
                 ApplySpotlightInPlace(processed, width, height, _smoothFaceX, _smoothFaceY, _smoothFaceW, _smoothFaceH, _spotlightIntensityValue);
             }
 
-            // NOTA: El espejo NO se hace aquí. Se pasa el flag `_isMirrorActive` 
-            // directamente a VirtualCameraBridge.WriteFrame que usa el MIRRORMODE
-            // del driver DirectShow (UnityCapture), evitando manipulación de píxeles.
-
-            // 2. Apply Rotation
             if (_rotationAngle != 0)
             {
                 processed = ApplyRotation(processed, width, height, _rotationAngle, out outWidth, out outHeight);
             }
 
-            // 4. Apply Filters
             if (_activeFilter != "none" && _filterIntensity > 0.0)
             {
                 ApplyFilterInPlace(processed, _activeFilter, _filterIntensity);
             }
 
-            // 5. Apply Auto Framing (Zoom & Center on Face)
             if (_isAutoFramingEnabled && _faceDetected)
             {
                 processed = ApplyAutoFraming(processed, outWidth, outHeight, _smoothFaceX * (outWidth / (double)width), _smoothFaceY * (outHeight / (double)height), _smoothFaceW * (outWidth / (double)width), _smoothFaceH * (outHeight / (double)height), _isAutoFramingZoomEnabled, out outWidth, out outHeight);
@@ -1227,37 +1269,11 @@ namespace desktop_app
             return processed;
         }
 
-        private void ApplyMirrorInPlace(byte[] rgba, int width, int height)
-        {
-            int rowSize = width * 4;
-            for (int y = 0; y < height; y++)
-            {
-                int rowStart = y * rowSize;
-                for (int x = 0; x < width / 2; x++)
-                {
-                    int left = rowStart + x * 4;
-                    int right = rowStart + (width - 1 - x) * 4;
-                    
-                    // Swap 4 bytes en una sola operación
-                    byte t0 = rgba[left], t1 = rgba[left+1], t2 = rgba[left+2], t3 = rgba[left+3];
-                    rgba[left]   = rgba[right];
-                    rgba[left+1] = rgba[right+1];
-                    rgba[left+2] = rgba[right+2];
-                    rgba[left+3] = rgba[right+3];
-                    rgba[right]   = t0;
-                    rgba[right+1] = t1;
-                    rgba[right+2] = t2;
-                    rgba[right+3] = t3;
-                }
-            }
-        }
-
         private byte[] ApplyRotation(byte[] rgba, int width, int height, int angle, out int outWidth, out int outHeight)
         {
             if (angle == 90)
             {
-                outWidth = height;
-                outHeight = width;
+                outWidth = height; outHeight = width;
                 byte[] output = new byte[rgba.Length];
                 for (int y = 0; y < height; y++)
                 {
@@ -1277,8 +1293,7 @@ namespace desktop_app
             }
             else if (angle == 180)
             {
-                outWidth = width;
-                outHeight = height;
+                outWidth = width; outHeight = height;
                 byte[] output = new byte[rgba.Length];
                 int totalPixels = width * height;
                 for (int i = 0; i < totalPixels; i++)
@@ -1294,8 +1309,7 @@ namespace desktop_app
             }
             else if (angle == 270)
             {
-                outWidth = height;
-                outHeight = width;
+                outWidth = height; outHeight = width;
                 byte[] output = new byte[rgba.Length];
                 for (int y = 0; y < height; y++)
                 {
@@ -1315,8 +1329,7 @@ namespace desktop_app
             }
             else
             {
-                outWidth = width;
-                outHeight = height;
+                outWidth = width; outHeight = height;
                 return rgba;
             }
         }
@@ -1329,17 +1342,13 @@ namespace desktop_app
                 byte g = rgba[i + 1];
                 byte b = rgba[i + 2];
 
-                byte targetR = r;
-                byte targetG = g;
-                byte targetB = b;
+                byte targetR = r, targetG = g, targetB = b;
 
                 switch (filter)
                 {
                     case "mono":
                         byte gray = (byte)(0.299 * r + 0.587 * g + 0.114 * b);
-                        targetR = gray;
-                        targetG = gray;
-                        targetB = gray;
+                        targetR = gray; targetG = gray; targetB = gray;
                         break;
                     case "sepia":
                         targetR = (byte)Math.Min(255, 0.393 * r + 0.769 * g + 0.189 * b);
@@ -1347,9 +1356,7 @@ namespace desktop_app
                         targetB = (byte)Math.Min(255, 0.272 * r + 0.534 * g + 0.131 * b);
                         break;
                     case "negative":
-                        targetR = (byte)(255 - r);
-                        targetG = (byte)(255 - g);
-                        targetB = (byte)(255 - b);
+                        targetR = (byte)(255 - r); targetG = (byte)(255 - g); targetB = (byte)(255 - b);
                         break;
                     case "vintage":
                         targetR = (byte)Math.Min(255, r * 1.1 + 10);
@@ -1371,17 +1378,15 @@ namespace desktop_app
                 }
                 else
                 {
-                    rgba[i] = targetR;
-                    rgba[i + 1] = targetG;
-                    rgba[i + 2] = targetB;
+                    rgba[i] = targetR; rgba[i + 1] = targetG; rgba[i + 2] = targetB;
                 }
             }
         }
+
         private void CheckUnityCaptureDriver()
         {
             try
             {
-                // Intentar abrir el MMF para verificar que el driver está activo
                 using var testMmf = System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting("UnityCapture_Data");
                 Log("[+] Driver UnityCapture detectado. Cámara virtual disponible.");
             }
@@ -1389,18 +1394,15 @@ namespace desktop_app
             {
                 Log("[-] Driver UnityCapture NO registrado. La cámara virtual no estará disponible.");
                 Log("    Para activarla, ejecuta 'InstallVirtualCamera.bat' como ADMINISTRADOR.");
-                Log("    Luego reinicia las apps (OBS, Zoom, Chrome, etc.) para que detecten la cámara.");
             }
         }
 
         private string? FindFFmpegExecutable()
         {
-            // 1. Buscar en el directorio de la aplicación
             string appDir = AppDomain.CurrentDomain.BaseDirectory;
             string localPath = Path.Combine(appDir, "ffmpeg.exe");
             if (File.Exists(localPath)) return localPath;
 
-            // 2. Buscar en el PATH del sistema
             try
             {
                 var process = new Process
@@ -1422,7 +1424,6 @@ namespace desktop_app
             }
             catch { }
 
-            // 3. Buscar en rutas comunes
             string[] commonPaths = {
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
@@ -1442,6 +1443,7 @@ namespace desktop_app
             var idevice = LibiMobileDevice.Instance.iDevice;
             int totalRead = 0;
             byte[] tempBuffer = new byte[length];
+            int consecutiveZeroReads = 0;
 
             while (totalRead < length && !token.IsCancellationRequested)
             {
@@ -1455,10 +1457,14 @@ namespace desktop_app
                 {
                     Buffer.BlockCopy(tempBuffer, 0, targetBuffer, totalRead, (int)readThisTime);
                     totalRead += (int)readThisTime;
+                    consecutiveZeroReads = 0;
                 }
                 else
                 {
-                    Thread.Sleep(1);
+                    consecutiveZeroReads++;
+                    // Back-off progresivo: más tiempo de espera por cada lectura fallida consecutiva
+                    int sleepMs = Math.Min(consecutiveZeroReads * 5, 100);
+                    Thread.Sleep(sleepMs);
                 }
             }
             return iDeviceError.Success;
@@ -1494,7 +1500,6 @@ namespace desktop_app
                 _isDetectingFaces = true;
             }
 
-            // Copy frame for thread safety
             byte[] frameCopy = new byte[frame.Length];
             Buffer.BlockCopy(frame, 0, frameCopy, 0, frame.Length);
 
@@ -1598,7 +1603,6 @@ namespace desktop_app
                             double t = (distance - innerRadius) / (radius - innerRadius);
                             t = Math.Max(0.0, Math.Min(1.0, t));
                             double currentDim = dimFactor * t;
-
                             rgba[idx] = (byte)(rgba[idx] * (1.0 - currentDim));
                             rgba[idx + 1] = (byte)(rgba[idx + 1] * (1.0 - currentDim));
                             rgba[idx + 2] = (byte)(rgba[idx + 2] * (1.0 - currentDim));
@@ -1720,7 +1724,7 @@ namespace desktop_app
 
         protected override void OnClosed(EventArgs e)
         {
-            StopTunnel();
+            _ = StopTunnel();
             _devicePollTimer?.Stop();
             _virtualCameraBridge.Dispose();
             _trayIcon?.Dispose();

@@ -62,7 +62,9 @@ import AVFoundation
         case "setISO":
           if let args = call.arguments as? [String: Any],
              let iso = args["iso"] as? Double {
-            // Usar exposición custom con ISO: shutter duration por defecto (auto)
+            // Usar exposición custom con ISO: shutterDurationMs=0 le indica al
+            // método nativo que mantenga la duración de obturación actual
+            // en vez de pasarla a 0 (lo que causaría exposición inválida).
             WebcamStreamer.shared.setExposureModeCustom(shutterDurationMs: 0, iso: Float(iso))
           }
           result("ok")

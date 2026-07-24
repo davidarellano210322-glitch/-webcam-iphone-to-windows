@@ -1,7 +1,7 @@
 // ============================================================================
 // PANTALLA 1: CONFIGURACIÓN / CONEXIÓN (Setup Screen)
-// Visualizer teléfono ↔ laptop, anillos pulsantes, botones WiFi / USB
-// Campo de IP del servidor Windows + conexión funcional
+// Visualizer teléfono ↔ laptop, anillos pulsantes, botón de inicio
+// La conexión es USB nativo — no requiere IP, WiFi ni server.py.
 // ============================================================================
 
 import 'package:flutter/material.dart';
@@ -29,7 +29,7 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _pulseRingCtrl;
   late AnimationController _bounceAntennaCtrl;
   bool _isConnecting = false;
@@ -109,7 +109,7 @@ class _SetupScreenState extends State<SetupScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
-        color: NC.bg.withOpacity(0.7),
+        color: NC.bg.withValues(alpha: 0.7),
         border: const Border(bottom: BorderSide(color: NC.white10)),
       ),
       child: Row(
@@ -164,9 +164,9 @@ class _SetupScreenState extends State<SetupScreen>
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: NC.bg.withOpacity(0.85),
+                    color: NC.bg.withValues(alpha: 0.85),
                     shape: BoxShape.circle,
-                    border: Border.all(color: NC.primary.withOpacity(0.4)),
+                    border: Border.all(color: NC.primary.withValues(alpha: 0.4)),
                     boxShadow: const [BoxShadow(color: NC.primaryGlow, blurRadius: 20)],
                   ),
                   child: const Icon(Icons.settings_input_antenna,
@@ -296,7 +296,7 @@ class _SetupScreenState extends State<SetupScreen>
           Container(
             height: 10,
             width: double.infinity,
-            color: NC.surfaceBright.withOpacity(0.5),
+            color: NC.surfaceBright.withValues(alpha: 0.5),
           ),
         ],
       ),
@@ -307,7 +307,7 @@ class _SetupScreenState extends State<SetupScreen>
     return Column(
       children: [
         const Text(
-          'Listo para Conectar',
+          'Listo para Transmitir',
           style: TextStyle(
             fontFamily: 'Hanken Grotesk',
             fontSize: 26,
@@ -316,13 +316,15 @@ class _SetupScreenState extends State<SetupScreen>
           ),
         ),
         const SizedBox(height: 8),
-        Text(
-          'Conecta tu iPhone a tu PC y empieza a transmitir video profesional.',
+        const Text(
+          'Conecta tu iPhone por USB y presiona Iniciar.\n'
+          'La app de escritorio NeoCamo Studio lo detectará automáticamente.',
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Inter',
             fontSize: 13,
             color: NC.onSurfaceVariant,
+            height: 1.5,
           ),
         ),
       ],
@@ -333,17 +335,17 @@ class _SetupScreenState extends State<SetupScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: NC.surfaceContainerLow.withOpacity(0.6),
+        color: NC.surfaceContainerLow.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: NC.white05),
       ),
       child: Column(
         children: [
-          _buildInstructionStep('1', 'Conecta tu iPhone por cable USB a tu PC.'),
+          _buildInstructionStep('1', 'Conecta tu iPhone al PC con el cable USB Lightning/USB-C.'),
           const SizedBox(height: 12),
-          _buildInstructionStep('2', 'Abre la app de escritorio NeoCamo Studio.'),
+          _buildInstructionStep('2', 'Abre NeoCamo Studio en tu PC. Detectará tu iPhone automáticamente.'),
           const SizedBox(height: 12),
-          _buildInstructionStep('3', 'Presiona Conectar y luego el boton REC.'),
+          _buildInstructionStep('3', 'Presiona Iniciar aqui. Luego dale al boton REC en la PC.'),
         ],
       ),
     );
@@ -356,7 +358,7 @@ class _SetupScreenState extends State<SetupScreen>
           width: 22,
           height: 22,
           decoration: BoxDecoration(
-            color: NC.primary.withOpacity(0.2),
+            color: NC.primary.withValues(alpha: 0.2),
             shape: BoxShape.circle,
           ),
           child: Center(
@@ -393,7 +395,7 @@ class _SetupScreenState extends State<SetupScreen>
           style: ElevatedButton.styleFrom(
             backgroundColor: NC.primary,
             foregroundColor: NC.onPrimary,
-            minimumSize: const Size(double.infinity, 56),
+            minimumSize: const Size(double.infinity, 58),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
             ),
@@ -410,35 +412,13 @@ class _SetupScreenState extends State<SetupScreen>
                     strokeWidth: 2,
                   ),
                 )
-              : const Icon(Icons.wifi, size: 22),
+              : const Icon(Icons.usb, size: 22),
           label: Text(
-            _isConnecting ? 'Conectando...' : 'Conectar por WiFi',
+            _isConnecting ? 'Iniciando...' : 'Iniciar Streaming (USB)',
             style: const TextStyle(
               fontFamily: 'Hanken Grotesk',
               fontSize: 15,
               fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: NC.onSurface,
-            minimumSize: const Size(double.infinity, 54),
-            side: const BorderSide(color: NC.white20),
-            backgroundColor: NC.surfaceContainer.withOpacity(0.7),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          onPressed: _isConnecting ? null : _handleConnect,
-          icon: const Icon(Icons.usb, color: NC.primary, size: 22),
-          label: const Text(
-            'Modo Prioridad USB',
-            style: TextStyle(
-              fontFamily: 'Inter',
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
             ),
           ),
         ),
@@ -447,7 +427,7 @@ class _SetupScreenState extends State<SetupScreen>
           onPressed: () => _showTroubleshootModal(),
           icon: const Icon(Icons.help_outline, color: NC.onSurfaceVariant, size: 18),
           label: const Text(
-            'Solucionar problemas de conexión',
+            'Solucionar problemas',
             style: TextStyle(
               fontFamily: 'Geist',
               fontSize: 12,
@@ -471,9 +451,9 @@ class _SetupScreenState extends State<SetupScreen>
               const SizedBox(width: 8),
               FooterBadge(label: 'MIC', isOk: widget.micPermission),
               const SizedBox(width: 8),
-              FooterBadge(label: 'RED LOCAL', isOk: widget.networkPermission),
             ],
           ),
+          const SizedBox(height: 8),
           const SizedBox(height: 8),
           const Text(
             'BUILD: NC-2026.08-PRO // V2.5.0',
@@ -499,8 +479,8 @@ class _SetupScreenState extends State<SetupScreen>
           borderRadius: BorderRadius.circular(20),
           side: const BorderSide(color: NC.white10),
         ),
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.help_outline, color: NC.primary),
             SizedBox(width: 8),
             Text(
@@ -513,28 +493,28 @@ class _SetupScreenState extends State<SetupScreen>
             ),
           ],
         ),
-        content: Column(
+        content: const Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text(
-              '1. Asegúrate de que server.py esté ejecutándose en tu PC.',
-              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
+              '1. Asegúrate de que iTunes (o Apple Mobile Device Support) esté instalado en tu PC. Es necesario para la conexión USB.',
+              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant, height: 1.4),
             ),
             SizedBox(height: 8),
             Text(
-              '2. Verifica que tu iPhone y tu PC estén en el mismo WiFi.',
-              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
+              '2. Conecta el iPhone con el cable USB. Si aparece "Confiar en esta computadora", presiona Confiar.',
+              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant, height: 1.4),
             ),
             SizedBox(height: 8),
             Text(
-              '3. Verifica que el puerto 8000 esté abierto en el firewall.',
-              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
+              '3. Abre NeoCamo Studio en tu PC. Debería detectar tu iPhone automáticamente.',
+              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant, height: 1.4),
             ),
             SizedBox(height: 8),
             Text(
-              '4. Si usas cable USB, presiona "Confiar en esta computadora".',
-              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant),
+              '4. Si no detecta el iPhone, desconecta y reconecta el cable, o reinicia la app de escritorio.',
+              style: TextStyle(fontSize: 13, color: NC.onSurfaceVariant, height: 1.4),
             ),
           ],
         ),

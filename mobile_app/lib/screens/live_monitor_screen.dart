@@ -16,6 +16,7 @@ import '../widgets/neocamo_widgets.dart';
 class LiveMonitorScreen extends StatefulWidget {
   final TelemetryService telemetry;
   final CameraController? cameraController;
+  final bool streamingActive; // true mientras el streaming nativo (Swift) está activo
   final VoidCallback onBack;
   final VoidCallback onOpenTune;
   final VoidCallback onOpenSettings;
@@ -25,6 +26,7 @@ class LiveMonitorScreen extends StatefulWidget {
     super.key,
     required this.telemetry,
     required this.cameraController,
+    this.streamingActive = false,
     required this.onBack,
     required this.onOpenTune,
     required this.onOpenSettings,
@@ -122,6 +124,14 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
   // ─── VISTA PREVIA DE CÁMARA REAL ─────────────────────────────────────────
   Widget _buildCameraPreview() {
     final ctrl = widget.cameraController;
+
+    // Mientras el streaming nativo (Swift) está activo, iOS cede la cámara a
+    // la AVCaptureSession de WebcamStreamer. No podemos mostrar el preview de
+    // Flutter aquí (competiría por el hardware). Mostramos un estado en vivo.
+    if (widget.streamingActive) {
+      return _buildLiveStreamingBackground();
+    }
+
     if (ctrl == null || !ctrl.value.isInitialized) {
       return _buildCameraPlaceholder();
     }
@@ -140,6 +150,70 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
     );
   }
 
+  /// Fondo durante el streaming: gradiente animado que refleja que el iPhone
+  /// está transmitiendo hacia el PC (la cámara la usa el stream nativo).
+  Widget _buildLiveStreamingBackground() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment.center,
+          radius: 0.8,
+          colors: [Color(0xFF1A2E1D), Color(0xFF0A0A0C)],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.85, end: 1.0),
+              duration: const Duration(milliseconds: 900),
+              builder: (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: NC.primary.withValues(alpha: 0.15),
+                  border: Border.all(color: NC.primary.withValues(alpha: 0.6), width: 2),
+                  boxShadow: const [
+                    BoxShadow(color: NC.primaryGlow, blurRadius: 30),
+                  ],
+                ),
+                child: const Icon(Icons.cast_connected,
+                    color: NC.primary, size: 44),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'TRANSMITIENDO AL PC',
+              style: TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: NC.primary,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Mira la vista previa en NeoCamo Studio (Windows).\n'
+              'La cámara del iPhone está dedicada al stream.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 11,
+                color: Colors.white38,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCameraPlaceholder() {
     return Container(
       color: const Color(0xFF0A0A0C),
@@ -148,7 +222,7 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.videocam_off,
-                color: NC.primary.withOpacity(0.3), size: 64),
+                color: NC.primary.withValues(alpha: 0.3), size: 64),
             const SizedBox(height: 16),
             const Text(
               'Cámara no inicializada',
@@ -179,7 +253,7 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: NC.bg.withOpacity(0.7),
+        color: NC.bg.withValues(alpha: 0.7),
         border: const Border(bottom: BorderSide(color: NC.white10)),
       ),
       child: Row(
@@ -322,7 +396,7 @@ class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
-        color: NC.surfaceContainerLow.withOpacity(0.85),
+        color: NC.surfaceContainerLow.withValues(alpha: 0.85),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: const Border(top: BorderSide(color: NC.white10)),
       ),
